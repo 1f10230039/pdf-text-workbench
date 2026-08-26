@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img"
+     aria-label="PDF→テキスト化ワークベンチ">
+  <!-- 16pxでも潰れないように、要素は「面」だけで作る（細線・文字は使わない）。
+       意味づけ: 太い黄色の帯＝大見出し、細い白の帯＝本文。この画面の色分けと揃えてある。 -->
+  <rect width="64" height="64" rx="14" fill="#1b64c4"/>
+  <rect x="14" y="15" width="24" height="8"  rx="4" fill="#fbbf24"/>
+  <rect x="14" y="29" width="36" height="6"  rx="3" fill="#ffffff"/>
+  <rect x="14" y="40" width="36" height="6"  rx="3" fill="#ffffff"/>
+  <rect x="14" y="51" width="19" height="6"  rx="3" fill="#ffffff" opacity=".65"/>
+</svg>

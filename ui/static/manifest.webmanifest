@@ -1,0 +1,17 @@
+{
+  "name": "PDF→テキスト化ワークベンチ",
+  "short_name": "PDF→テキスト",
+  "description": "サステナビリティレポートPDFを、原本と見比べながら文単位のテキストに変換する作業画面。設定は会社ごとにJSONで残り、pdf2txt.py が同じ結果を再現します。",
+  "lang": "ja",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#12141a",
+  "theme_color": "#12141a",
+  "icons": [
+    { "src": "/static/favicon.svg", "sizes": "any", "type": "image/svg+xml" },
+    { "src": "/static/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/static/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "/static/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

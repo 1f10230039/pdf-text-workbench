@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install ruff pytest
+      - name: Lint (ruff)
+        run: ruff check .
+      - name: Test (pytest)
+        run: pytest -q
+      - name: Smoke test (sample PDF end-to-end)
+        run: |
+          python examples/make_sample.py
+          python - <<'EOF'
+          import sys
+          sys.path.insert(0, ".")
+          import core, pymupdf
+          doc = pymupdf.open("examples/sample.pdf")
+          st = core.Settings.from_dict({"skip_pages": [{"page": 1, "reason": "表紙"}]})
+          rows = core.extract_doc(doc, st)
+          assert len(rows) >= 10, f"抽出行が少なすぎる: {len(rows)}"
+          rx = core.keyword_regex(["生成AI", "LLM"])
+          assert sum(1 for r in rows if rx.search(r["文"])) >= 3
+          print(f"OK: {len(rows)} rows extracted")
+          EOF

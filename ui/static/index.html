@@ -1,0 +1,356 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PDF→テキスト化ワークベンチ</title>
+<meta name="description" content="サステナビリティレポートのPDFを、原本と見比べながら文ごとのテキストにする作業画面。設定は会社ごとにJSONで残り、pdf2txt.py が同じ結果を再現します。">
+<meta name="color-scheme" content="dark light">
+<meta name="theme-color" content="#151518" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#f5f5f7" media="(prefers-color-scheme: light)">
+<meta name="robots" content="noindex, nofollow">
+<link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+<link rel="alternate icon" href="/static/favicon.ico" sizes="16x16 32x32 48x48">
+<link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
+<link rel="manifest" href="/static/manifest.webmanifest">
+<link rel="stylesheet" href="/static/style.css">
+<!-- 外観の設定を描画前に当てる（読み込み直後に一瞬ダークになる「ちらつき」を防ぐ） -->
+<script>try{const t=localStorage.getItem("theme");if(t==="light"||t==="dark")document.documentElement.dataset.theme=t;}catch(e){}</script>
+</head>
+<body>
+
+<!-- 線画アイコン。必ず文字と組で使う（→ デザイン方針.md） -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-doc" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h6"/></symbol>
+    <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2"/><path d="M19.4 13.5a7.6 7.6 0 0 0 0-3l2-1.5-2-3.5-2.4.9a7.6 7.6 0 0 0-2.6-1.5L14 2.5h-4l-.4 2.4a7.6 7.6 0 0 0-2.6 1.5L4.6 5.5l-2 3.5 2 1.5a7.6 7.6 0 0 0 0 3l-2 1.5 2 3.5 2.4-.9a7.6 7.6 0 0 0 2.6 1.5l.4 2.4h4l.4-2.4a7.6 7.6 0 0 0 2.6-1.5l2.4.9 2-3.5z"/></symbol>
+    <symbol id="i-save" viewBox="0 0 24 24"><path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/><path d="M12 4v11M8 11l4 4 4-4"/></symbol>
+    <symbol id="i-export" viewBox="0 0 24 24"><path d="M12 16V4M8 8l4-4 4 4"/><path d="M5 13v5a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-5"/></symbol>
+    <symbol id="i-list" viewBox="0 0 24 24"><path d="M9 6h11M9 12h11M9 18h11"/><circle cx="4.5" cy="6" r="1"/><circle cx="4.5" cy="12" r="1"/><circle cx="4.5" cy="18" r="1"/></symbol>
+    <symbol id="i-clip" viewBox="0 0 24 24"><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4.5h6M9 11h6M9 15h4"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.2-4.2"/></symbol>
+    <symbol id="i-pages" viewBox="0 0 24 24"><rect x="4" y="3" width="11" height="14" rx="1.5"/><path d="M8 7h3M8 10.5h3M18 7v12a2 2 0 0 1-2 2H8"/></symbol>
+    <symbol id="i-sidebar" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="M9 4v16M5.5 8h1.5M5.5 11h1.5M5.5 14h1.5"/></symbol>
+    <symbol id="i-chev-l" viewBox="0 0 24 24"><path d="m14.5 6-6 6 6 6"/></symbol>
+    <symbol id="i-chev-r" viewBox="0 0 24 24"><path d="m9.5 6 6 6-6 6"/></symbol>
+    <symbol id="i-chev-d" viewBox="0 0 24 24"><path d="m6 9.5 6 6 6-6"/></symbol>
+    <symbol id="i-back" viewBox="0 0 24 24"><path d="M19 12H5M11 6l-6 6 6 6"/></symbol>
+    <symbol id="i-help" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.6 9.5a2.5 2.5 0 1 1 3.6 2.2c-.8.4-1.2 1-1.2 1.8M12 17v.5"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24"><path d="M7 7l10 10M17 7 7 17"/></symbol>
+    <symbol id="i-scissors" viewBox="0 0 24 24"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M20 4 8.12 15.88M14.47 14.48 20 20M8.12 8.12 12 12"/></symbol>
+    <symbol id="i-undo" viewBox="0 0 24 24"><path d="M4 10h10a5 5 0 0 1 0 10h-3"/><path d="m8 6-4 4 4 4"/></symbol>
+    <symbol id="i-table" viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="14" rx="2"/><path d="M3.5 10h17M3.5 14.5h17M9.5 5v14M15 5v14"/></symbol>
+    <symbol id="i-link" viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 5.7 0l2.8-2.8a4 4 0 1 0-5.7-5.7l-1.4 1.4"/><path d="M14 10a4 4 0 0 0-5.7 0l-2.8 2.8a4 4 0 1 0 5.7 5.7l1.4-1.4"/></symbol>
+    <symbol id="i-up" viewBox="0 0 24 24"><path d="M12 19V5M6 11l6-6 6 6"/></symbol>
+    <symbol id="i-gather" viewBox="0 0 24 24"><path d="M8 4v16M5 7l3-3 3 3M16 20V4M13 17l3 3 3-3"/></symbol>
+    <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2.5 12s3.5-6.5 9.5-6.5 9.5 6.5 9.5 6.5-3.5 6.5-9.5 6.5S2.5 12 2.5 12z"/><circle cx="12" cy="12" r="2.8"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7.5A1.5 1.5 0 0 1 4.5 6h4l2 2h9a1.5 1.5 0 0 1 1.5 1.5V18a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 18z"/></symbol>
+    <symbol id="i-sparkle" viewBox="0 0 24 24"><path d="M12 3v4M12 17v4M3 12h4M17 12h4M6.5 6.5l2.5 2.5M15 15l2.5 2.5M6.5 17.5 9 15M15 9l2.5-2.5"/></symbol>
+    <symbol id="i-pin" viewBox="0 0 24 24"><path d="M12 21s6-5.5 6-10a6 6 0 0 0-12 0c0 4.5 6 10 6 10z"/><circle cx="12" cy="11" r="2.2"/></symbol>
+    <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2.5v2.5M12 19v2.5M2.5 12H5M19 12h2.5M5.3 5.3l1.8 1.8M16.9 16.9l1.8 1.8M5.3 18.7l1.8-1.8M16.9 7.1l1.8-1.8"/></symbol>
+    <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"/></symbol>
+    <symbol id="i-ban" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m5.6 5.6 12.8 12.8"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12.5 4.5 4.5L19 7"/></symbol>
+  </defs>
+</svg>
+
+<!-- ===== タイトルバー（1本だけ）。左：戻る＋文書名／中：ページ移動と「このページの判断」／右：表示・保存・書き出し・外観 ===== -->
+<header id="titlebar" class="glass">
+  <div class="tb-left">
+    <button id="backBtn" class="ghost icon" hidden title="PDFを選び直す"><svg class="ic"><use href="#i-back"/></svg></button>
+    <h1><svg class="ic"><use href="#i-doc"/></svg><span id="appTitle">PDF→テキスト化</span></h1>
+    <div class="doc-info" id="docInfo"></div>
+  </div>
+  <div id="tools" hidden>
+    <div class="tb-center">
+      <button id="sbToggle" class="ghost icon" title="サイドバーを出す／しまう（T キー）"><svg class="ic"><use href="#i-sidebar"/></svg></button>
+      <span class="sep"></span>
+      <button id="prev" class="ghost icon" title="前のページへ（← キー）"><svg class="ic"><use href="#i-chev-l"/></svg></button>
+      <span class="pageno"><input type="number" id="pageNo" value="1" min="1"><span class="of">/ <span id="pageMax"></span></span></span>
+      <button id="next" class="ghost icon" title="次のページへ（→ キー）"><svg class="ic"><use href="#i-chev-r"/></svg></button>
+      <span class="label" id="pageLabel" title="印刷上のページ番号"></span>
+      <span class="sep"></span>
+      <label class="chk"><input type="checkbox" id="skipThis"> このページを除外</label>
+      <select id="skipReason" class="reason" hidden title="なぜ外すのか。設定JSONに残り、卒論の付録になります"></select>
+      <span id="busy" hidden>解析中</span>
+    </div>
+    <div class="tb-right">
+      <div class="popwrap">
+        <button id="viewBtn" class="ghost" title="枠・赤・並び順・表示幅"><svg class="ic"><use href="#i-eye"/></svg>表示</button>
+        <div id="viewMenu" class="popover" hidden>
+          <label class="chk"><input type="checkbox" id="showBoxes" checked> ブロックの枠を表示</label>
+          <label class="chk"><input type="checkbox" id="dimDropped" checked> 落とした行を赤く</label>
+          <label class="chk"><input type="checkbox" id="showTables" checked> 表の範囲を表示</label>
+          <label class="chk">並び
+            <select id="order">
+              <option value="reading">読み順（列→上から）</option>
+              <option value="pdf">PDFの順（描画順）</option>
+            </select>
+          </label>
+          <span class="zoom">幅 <input type="range" id="zoom" min="480" max="1800" step="40" value="900"></span>
+        </div>
+      </div>
+      <button id="saveTop" class="ghost" title="設定をJSONに保存します（Ctrl+S）"><svg class="ic"><use href="#i-save"/></svg>保存済み</button>
+      <button id="exportBtn" class="primary" title="この1冊を 文単位CSV・ページ単位CSV・KH Coder用txt に書き出します。設定JSONも一緒に保存されます"><svg class="ic"><use href="#i-export"/></svg>書き出す</button>
+    </div>
+  </div>
+  <div class="seg" id="themeSeg" title="外観。自動＝ブラウザ／OSの設定に従う">
+    <button data-theme="auto" title="自動"><svg class="ic"><use href="#i-sparkle"/></svg></button>
+    <button data-theme="light" title="ライト"><svg class="ic"><use href="#i-sun"/></svg></button>
+    <button data-theme="dark" title="ダーク"><svg class="ic"><use href="#i-moon"/></svg></button>
+  </div>
+</header>
+
+<!-- ===== ① PDFを選ぶ ===== -->
+<section id="pane-open" class="open-pane">
+  <div class="open-main">
+    <div class="open-head">
+      <h2>PDFを選ぶ</h2>
+      <input id="docFilter" class="search" placeholder="企業名や年度で絞り込む…">
+      <button id="bdBtn" title="ヘッダー・フッターの切り取り線が本文を巻き込んでいないか、全冊を機械診断します。確認モードの前に必ず1回"><svg class="ic"><use href="#i-eye"/></svg><span id="bdBtnLabel">切り取りの点検</span></button>
+      <button id="auditBtn" class="primary" title="選んだ文書（未選択なら全部）の生成AI関連語のヒット箇所を、1件ずつ順に確認します"><svg class="ic"><use href="#i-gather"/></svg><span id="auditBtnLabel">ヒットを確認（全冊）</span></button>
+    </div>
+    <div class="open-selbar">
+      <button id="selAll" class="ghost mini">すべて選ぶ</button>
+      <button id="selNone" class="ghost mini">選択を外す</button>
+      <span id="selCount" class="hint"></span>
+      <span class="spacer"></span>
+      <span class="hint">クリックで選択（複数可）。個別に直すときだけ行末の「開く」</span>
+    </div>
+    <ul id="docList" class="doclist"></ul>
+  </div>
+  <aside class="open-side">
+    <div class="card steps">
+      <h3><svg class="ic"><use href="#i-sparkle"/></svg>いまの流れ（抽出単位方式）</h3>
+      <ol>
+        <li>まず<b>切り取りの点検</b> — ヘッダー・フッターの切り取り線が本文を巻き込んでいないかを全冊診断し、文書ごとに余白を直します（⚠️ フッターに巻き込まれて文が途中で切れていた実例あり）</li>
+        <li>文書を選んで<b>ヒットを確認</b>（確認モード）— 生成AI関連語のヒット箇所を1件ずつ ✓ で確認します。原本では検索語そのものが光ります</li>
+        <li>直したい箇所はカードの上でそのまま直せます — 文を<b>足す・繋ぐ・除外</b>（理由つき。全部JSONに残ります）。表の範囲やページ除外だけ「開いて直す」</li>
+        <li>確認が済んだら<b>全冊書き出し</b> → <code>KHCoder_抽出単位.xlsx</code>（年・企業・群で分割もできます）</li>
+        <li>KH Coder：新規プロジェクト → 列「テキスト」→ 強制抽出語 → 前処理 → 共起ネットワーク（単位H5）</li>
+      </ol>
+      <p class="note">出現率の分母になる全文データ（L1）は <code>pdf2txt.py</code> が既定値で一括生成します。
+        手作業はぜんぶ設定JSONに残り、同じ入力から同じ出力が再現されます＝卒論の<b>再現性と監査の材料</b>です。</p>
+    </div>
+    <div class="card">
+      <h3><svg class="ic"><use href="#i-plus"/></svg>新しいPDFを追加</h3>
+      <p class="note">ファイル名は <code>企業名_年度.pdf</code> に揃えて保存します。この名前がそのまま KH Coder の外部変数（企業名・年度）になります。</p>
+      <div class="row"><label>企業名 <input id="upCompany" placeholder="〇〇株式会社"></label><label>年度 <input id="upYear" placeholder="2025" size="6"></label></div>
+      <div class="row"><input type="file" id="upFile" accept="application/pdf"><button id="upBtn" class="primary"><svg class="ic"><use href="#i-plus"/></svg>追加する</button></div>
+      <div id="upMsg" class="msg"></div>
+    </div>
+  </aside>
+</section>
+
+<!-- ===== 確認モード（ヒット箇所を1件ずつ確認。卒論では「監査」。2026-08-25 追加） ===== -->
+<section id="audit" hidden>
+  <div class="audit-top">
+    <button id="auditBack" class="ghost"><svg class="ic"><use href="#i-back"/></svg>一覧へ戻る</button>
+    <b><svg class="ic"><use href="#i-gather"/></svg>確認モード</b>
+    <span id="auditProg" class="hint"></span>
+    <div class="audit-bar"><div id="auditBarFill"></div></div>
+    <span class="spacer"></span>
+    <span class="auzoom" title="原本の表示倍率（Ctrl+マウスホイールでも変えられます）">
+      <button id="auZoomOut" class="ghost mini">−</button>
+      <input type="range" id="auZoom" min="50" max="300" step="10" value="100">
+      <button id="auZoomIn" class="ghost mini">＋</button>
+      <span id="auZoomPct" class="hint">100%</span>
+    </span>
+    <label class="hint"><input type="checkbox" id="auditOnlyTodo" checked> 未確認だけ</label>
+    <button id="auditKwBtn" class="ghost mini" title="ヒットの検索に使っている語を見る・変える（全文書共通）"><svg class="ic"><use href="#i-search"/></svg><span id="auditKwLabel">検索語</span></button>
+    <button id="auditHelp" class="ghost mini" title="この画面でできること"><svg class="ic"><use href="#i-help"/></svg>使い方</button>
+    <button id="auditPreview" class="ghost mini" title="Excelにできる行と列をそのまま表で確認します"><svg class="ic"><use href="#i-table"/></svg>Excelプレビュー</button>
+    <button id="auditExport" class="primary mini"><svg class="ic"><use href="#i-export"/></svg>全冊書き出し</button>
+  </div>
+  <!-- 左＝単位カード（上・操作もここ）＋キュー一覧（下）／右＝原本PDFだけ（2026-08-25 深夜に集約） -->
+  <div id="auditMain">
+    <div id="auditLeft">
+      <div id="auditCard"></div>
+      <div id="auditList"></div>
+    </div>
+    <div id="auditRight"><div id="auditPageBox"></div></div>
+  </div>
+</section>
+
+<!-- 読み込み中（時間のかかる処理は進捗バー＋「いま何をしているか」を出す） -->
+<div id="loading" hidden>
+  <div class="loadbox">
+    <div class="spinner"></div>
+    <div id="loadMsg"></div>
+    <div class="loadbar" id="loadBar" hidden><div id="loadBarFill"></div></div>
+    <div id="loadPct" class="hint" hidden></div>
+    <div id="loadStep" hidden></div>
+    <div id="loadSub" class="hint"></div>
+  </div>
+</div>
+
+<div id="toast" hidden>
+  <span id="toastMsg"></span>
+  <span id="toastLinks"></span>
+  <button id="toastX" class="ghost mini">閉じる</button>
+</div>
+
+<div id="demoNote" hidden></div>
+
+<div id="modal" hidden>
+  <div class="modal-box">
+    <h3 id="modalTitle"></h3>
+    <div id="modalBody"></div>
+    <div class="modal-foot" id="modalFoot"></div>
+  </div>
+</div>
+
+<!-- ===== 作業画面：左サイドバー（タブ）／中央 原本／右 文の一覧 ===== -->
+<main id="work" hidden>
+  <aside id="sidebar">
+    <nav class="sbtabs" aria-label="サイドバー">
+      <button data-tab="units" id="unitBadge" title="生成AI関連語のヒット箇所を、規則で単位化して確認する（U キー）"><svg class="ic"><use href="#i-gather"/></svg><span>抽出</span></button>
+      <button data-tab="pages" id="thumbBtn" title="ページのサムネイル（T キー）"><svg class="ic"><use href="#i-pages"/></svg><span>ページ</span></button>
+      <button data-tab="ctx" id="ctxBadge" title="「生成AI」などの語を含む文と、その前後の文（F キー）"><svg class="ic"><use href="#i-search"/></svg><span>文脈窓</span></button>
+      <button data-tab="record" id="manBadge" title="手順の進み具合と、手で直した箇所"><svg class="ic"><use href="#i-clip"/></svg><span>記録</span><span class="cnt" id="manCnt"></span></button>
+      <button data-tab="settings" id="cfgBtn" title="抽出の設定（既定値で足りないときだけ）"><svg class="ic"><use href="#i-gear"/></svg><span>設定</span></button>
+    </nav>
+
+    <!-- ページ（サムネイル） -->
+    <section id="thumbs" class="sbpane" hidden><div id="thumbList"></div></section>
+
+    <!-- 設定。最初に1回詰めるだけ。上から順に -->
+    <section id="drawer" class="sbpane" hidden>
+      <section class="cfg">
+        <h3><span class="step">1</span>ヘッダーとフッターを切る</h3>
+        <div class="row2">
+          <label class="param">HEADER_Y <input type="number" step="1" id="p_header_y"></label>
+          <label class="param">FOOTER_MARGIN <input type="number" step="1" id="p_footer_margin"></label>
+          <label class="param">柱の割合 <input type="number" step="0.05" min="0" max="1" id="p_repeat_ratio"></label>
+        </div>
+        <p class="note">全ページで同じ位置にあるナビゲーションとページ番号を、上下の線で落とします。ページ画像の<b>青い線をドラッグ</b>しても動きます。
+          <b>柱の割合</b>：全ページのこの割合以上で同じ位置に同じ文言が出る行は、線の位置に関係なく落とします（<code>0</code> で無効）。
+          落とした行は<b>赤い破線</b>で出ます。</p>
+      </section>
+      <section class="cfg">
+        <h3><span class="step">2</span>本文の文字サイズ</h3>
+        <div class="row2">
+          <label class="param">本文pt <input type="number" step="0.1" id="p_body_size" placeholder="自動"></label>
+          <label class="param">SIZE_TOL <input type="number" step="0.1" id="p_size_tol"></label>
+          <label class="param">TINY_RATIO <input type="number" step="0.05" min="0" max="1" id="p_tiny_ratio"></label>
+        </div>
+        <p class="note">文書全体でいちばん文字数の多いサイズを本文とみなします。<b class="ok">緑</b>が本文の範囲。図表の多い会社でキャプションが最多になるときだけ手で上書きします。
+          <button class="mini ghost" id="autoBody">自動に戻す</button><br>
+          <b>TINY_RATIO</b>：本文より極端に小さい文字を種別「極小」にします（<code>0</code> で無効）。消してはいません。</p>
+        <table class="hist" id="hist"></table>
+      </section>
+      <section class="cfg">
+        <h3><span class="step">3</span>行の繋ぎ方</h3>
+        <div class="row2">
+          <label class="param">JOIN_GAP <input type="number" step="0.1" id="p_join_gap"></label>
+          <label class="param">COL_TOL <input type="number" step="1" id="p_col_tol"></label>
+          <label class="param">LINE_GAP <input type="number" step="0.1" id="p_line_gap"></label>
+          <label class="param">MIN_LEN <input type="number" step="1" id="p_min_len"></label>
+          <label class="param">セクション最小pt <input type="number" step="0.5" id="p_section_min_pt" placeholder="自動"></label>
+        </div>
+        <p class="note"><b>JOIN_GAP</b>：横に割れた行を繋ぐ隙間の上限（文字サイズ比）。上げすぎると2段組みの左右が繋がります。
+          <b>COL_TOL</b>：上げると別の列が繋がり、下げると同じ段落が割れます。<b>LINE_GAP</b>：上げると離れた行まで繋がります。
+          右の一覧とページ上の枠はホバーで連動します。</p>
+      </section>
+      <section class="cfg">
+        <h3><span class="step">4</span>続く文と表</h3>
+        <div class="row2">
+          <label class="param">続く文を繋ぐ <input type="checkbox" id="p_auto_join"></label>
+          <label class="param">表の検出 <select id="p_table_strategy">
+            <option value="lines_strict">罫線だけ（既定）</option>
+            <option value="lines">罫線＋塗り</option>
+            <option value="text">文字の位置</option>
+            <option value="none">しない</option>
+          </select></label>
+        </div>
+        <p class="note">数える単位は<b>文</b>と<b>ページ</b>です（段落は作りません）。
+          <b>続く文を繋ぐ</b>：句点で終わらず最終行が右端まで届いているブロックを次のブロックに繋ぎます。
+          <b>表</b>：罫線で区切られた表を 1行＝1ブロック に組み直します。図解の枠線を表と誤認したページは右の一覧の上で検出を切れます。</p>
+      </section>
+      <section class="cfg">
+        <h3><span class="step">5</span>除外するページ <button class="mini ghost" id="loadPages">一覧を読む</button></h3>
+        <p class="note"><span class="hint" id="skipCount"></span>
+          <b>Shift+クリック</b>で除外の切り替え、ふつうのクリックでそのページへ。外したら<b>理由を付けてください</b>（理由が無いものは「記録」に出ます）。</p>
+        <div id="pageList" class="pagelist"></div>
+      </section>
+      <div class="drawer-foot">
+        <button id="saveBtn" class="primary"><svg class="ic"><use href="#i-save"/></svg>設定を保存</button>
+        <button id="resetBtn" class="ghost mini">既定値に戻す</button>
+        <span class="hint">保存先 <code>卒研データ\設定\企業名_年度.json</code></span>
+      </div>
+    </section>
+
+    <!-- 記録（手順・手を入れた箇所） -->
+    <section id="taskPane" class="sbpane" hidden>
+      <p class="hint narrowonly tp-narrow">画面の幅が足りないので、右の文の一覧を畳んでいます。</p>
+      <p class="hint sb-sub" id="taskCount"></p>
+      <div id="taskBody"></div>
+    </section>
+
+    <!-- 文脈窓 -->
+    <section id="ctxPane" class="sbpane" hidden>
+      <div class="ctx-ctl">
+        <label class="ctx-kw">検索語 <input id="ctxKw" placeholder="生成AI, LLM, ChatGPT …" title="カンマ区切り。英字の語は単語として当てます"></label>
+        <label>前後 <select id="ctxN">
+          <option value="0">0</option><option value="1">1</option><option value="2" selected>2</option>
+          <option value="3">3</option><option value="4">4</option><option value="5">5</option>
+        </select> 文</label>
+        <span class="hint" id="ctxCount"></span>
+        <span class="spacer"></span>
+        <button id="ctxRun" class="mini">解析する</button>
+        <button id="ctxExport" class="ghost mini" title="文脈窓_○○_N2.csv ／ txt\文脈窓_○○_N2.txt ／ 外部変数_文脈窓_○○_N2.csv を書き出します" disabled><svg class="ic"><use href="#i-export"/></svg>書き出す</button>
+      </div>
+      <div id="ctxBody"><p class="note empty">検索語を含む文と、その前後N文を1つの窓にして一覧します（重なる窓は1つに）。<br>
+        <span class="hint">初回は数秒〜数十秒かかります。窓をクリックするとそのページへ飛びます。</span></p></div>
+    </section>
+
+    <!-- 抽出単位（L2。2026-08-25 追加） -->
+    <section id="unitPane" class="sbpane" hidden>
+      <div class="ctx-ctl">
+        <label class="ctx-kw">検索語 <input id="unitKw" placeholder="空欄＝既定のリスト" title="カンマ区切り。英字の語は単語として当てます"></label>
+        <span class="hint" id="unitCount"></span>
+        <span class="spacer"></span>
+        <button id="unitKwSave" class="ghost mini" title="この検索語を全文書共通の既定として保存します（設定\検索語.json。バッチも同じ語で抽出）">検索語を保存</button>
+        <button id="unitRun" class="mini">解析する</button>
+        <button id="unitTable" class="ghost mini" title="Excelにできる行と列をそのまま表で確認します" disabled><svg class="ic"><use href="#i-table"/></svg>Excel</button>
+        <button id="unitExport" class="ghost mini" title="抽出単位_○○.csv（全件・監査記録）と KHCoder_抽出単位_○○.xlsx（採用のみ）を書き出します" disabled><svg class="ic"><use href="#i-export"/></svg>書き出す</button>
+      </div>
+      <div id="unitBody"><p class="note empty">検索語のヒット箇所を規則で単位化します：本文→その文 ／ 表→その行 ／ ラベル→その文（結合できる）／ 見出し→その行。<br>
+        <span class="hint">薄い文をクリックすると単位に足せます。単位ごとに「外す」で理由を付けて除外できます。手作業はすべて設定JSONに残ります。</span></p></div>
+    </section>
+  </aside>
+
+  <div id="viewer">
+    <div id="stagewrap"><div id="stage"><div id="pages"></div></div></div>
+  </div>
+
+  <aside id="units">
+    <div class="units-head">
+      <b><svg class="ic"><use href="#i-list"/></svg>このページの文</b>
+      <span id="unitStat" class="hint"></span>
+      <span class="spacer"></span>
+      <span id="tblCtl"></span>
+      <button id="ordReset" class="ghost mini" hidden title="手動の並べ替えを取り消して自動の読み順に戻します"><svg class="ic"><use href="#i-undo"/></svg>並びを戻す</button>
+      <button id="helpBtn" class="ghost mini" title="この画面でできること"><svg class="ic"><use href="#i-help"/></svg>使い方</button>
+    </div>
+    <div class="legend">
+      <span class="k-本文">本文</span><span class="k-大">大</span><span class="k-小">小</span>
+      <span class="k-極小" title="本文より極端に小さい文字">極小</span>
+      <span class="k-表" title="罫線で区切られた表の1行">表</span>
+      <span class="k-drop" title="落とした行・除外した文">除外</span>
+    </div>
+    <div id="unitList"></div>
+    <div id="exWrap" hidden>
+      <details>
+        <summary>手で除外した文（<span id="exCount"></span>）</summary>
+        <p class="note">すべて設定JSONに残ります。ここで消すのは、リンク表記・ロゴ・ページ表記など<b>文書の記述でないもの</b>だけ。</p>
+        <div id="exList"></div>
+      </details>
+    </div>
+  </aside>
+</main>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

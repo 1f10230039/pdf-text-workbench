@@ -1,0 +1,28 @@
+# Render の Blueprint。GitHubのリポジトリを繋ぐと、この内容で公開デモが立つ。
+#
+# ⚠️ これは**見せるためのデモ**であって、本番の作業場所ではない。
+#    本番（＝卒論の数字を作る側）は手元の Windows で動かし、設定JSONも手元に残す。
+#    Render の無料枠はファイルが残らないので、こちらに作業を溜めてはいけない。
+#
+# 無料枠の性質（2026-08 時点・公式ドキュメントで確認）:
+#   ・15分アクセスが無いと停止し、次のアクセスで復帰に約1分かかる
+#   ・ファイルシステムは ephemeral（再デプロイ・再起動・停止で消える）
+#   ・月750インスタンス時間。使い切ると停止する
+#   → 「訪問者が自分のPDFを上げて試し、結果をダウンロードして持ち帰る」形にしてある。
+services:
+  - name: pdf2text-workbench
+    type: web
+    runtime: python
+    plan: free
+    region: singapore
+    buildCommand: pip install -r requirements.txt
+    # ⚠️ -w 1（ワーカー1つ）は必須。無料枠のメモリは小さく、PyMuPDFで開いたPDFを
+    #    ワーカーごとに抱えると足りなくなる。-t は解析が長いページ向けの余裕
+    startCommand: gunicorn -w 1 -t 180 -b 0.0.0.0:$PORT ui.app:app
+    envVars:
+      - key: PUBLIC_MODE
+        value: "1"
+      - key: PYTHON_VERSION
+        value: "3.11.9"
+      - key: PYTHONUNBUFFERED
+        value: "1"
