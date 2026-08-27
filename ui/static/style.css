@@ -199,7 +199,23 @@ input[type=range]{accent-color:var(--accent)}
 .doclist li:hover .openbtn,.doclist li.opening .openbtn{visibility:visible}
 .doclist.busy li:not(.opening){opacity:.45;pointer-events:none}
 .doclist li.hide{display:none}
-.open-selbar{display:flex;align-items:center;gap:8px}
+.open-selbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+
+/* 幅が足りないとき：右の案内カードを下へ回し、一覧の行はバッジを2段目に落とす */
+@media (max-width:1000px){
+  .open-pane{flex-direction:column;gap:16px;padding:16px}
+  .open-side{flex:0 0 auto}
+}
+@media (max-width:700px){
+  .doclist li{grid-template-columns:22px minmax(0,1fr) max-content max-content max-content;row-gap:3px}
+  .doclist .selbox{grid-row:1 / span 2}
+  .doclist .dname{grid-column:2 / span 3}
+  .doclist .c-hit{grid-column:2;grid-row:2}
+  .doclist .c-tags{grid-column:3;grid-row:2}
+  .doclist .mb{grid-column:4;grid-row:2;text-align:left}
+  .doclist .openbtn{grid-column:5;grid-row:1 / span 2;visibility:visible}   /* ホバーが無くても押せる */
+  .prep-head{flex-wrap:wrap}
+}
 
 /* ============================================================================
    作業画面：3列
