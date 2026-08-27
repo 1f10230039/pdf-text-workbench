@@ -2006,8 +2006,12 @@ def boundary_scan(doc, st: Settings, keywords: list[str] | None = None) -> dict:
     pagemark = re.compile(r"[\d\s\-–—―/|.,pP()©®]*")     # ページ番号・記号だけの行
     drops = {"header": [], "footer": []}
     n_pages = 0
+    dims: dict[int, list[float]] = {}
     for i, page in enumerate(doc):
         pageno = i + 1
+        # 寸法は**全ページ**分持つ（除外ページも）。画面のビューアが全ページに
+        # 境界線と除外の覆いを重ねるので、行が落ちていないページの縦横も要る
+        dims[pageno] = [round(page.rect.width, 1), round(page.rect.height, 1)]
         if pageno in skip:
             continue
         n_pages += 1
@@ -2023,9 +2027,14 @@ def boundary_scan(doc, st: Settings, keywords: list[str] | None = None) -> dict:
                 "_key": (t, round(ln["x0"]), round(ln["y0"])),
                 # 境界の提案に使う距離：フッターは下端からの深さ、ヘッダーは上端から
                 "深さ": round(h - ln["y1"], 1) if d == "footer" else round(ln["y0"], 1),
+                # 画面で原本の上に重ねる矩形（pt。画像側で倍率をかける）
+                "rect": [round(ln["x0"], 1), round(ln["y0"], 1),
+                         round(ln["x1"], 1), round(ln["y1"], 1)],
             })
 
-    out = {"ページ数": n_pages}
+    out = {"ページ数": n_pages, "総ページ": len(doc),
+           # 全ページの寸法 [幅, 高さ]（pt）。矩形・線・覆いを画像に重ねる換算に使う
+           "寸法": {str(k): v for k, v in dims.items()}}
     for side, cur in (("footer", st.footer_margin), ("header", st.header_y)):
         rows = drops[side]
         freq = collections.Counter()
@@ -2067,14 +2076,21 @@ def boundary_scan(doc, st: Settings, keywords: list[str] | None = None) -> dict:
                 clash = True                                  # ページ番号が境界の内側→値では分けられない
             else:
                 suggest = cand
+        def _row(r, cls):
+            return {"ページ": r["ページ"], "text": r["text"][:120], "分類": cls,
+                    "深さ": r["深さ"], "rect": r["rect"],
+                    "検索語": bool(cls == "本文" and rx and rx.search(r["text"]))}
         out[side] = {
             "現在": cur, "件数": len(content), "備品": len(repeats) + len(pagenums),
             "番号": len(pagenums), "数字ラベル": len(numlabels),
             "検索語入り": len(kw_hits), "提案": suggest, "干渉": clash,
-            # 画面で見せる例（長い順＝文章らしい順に上位だけ）
-            "例": [{"ページ": r["ページ"], "text": r["text"][:80],
-                    "検索語": bool(rx and rx.search(r["text"]))}
-                   for r in sorted(content, key=lambda r: -len(r["text"]))[:12]],
+            # 落ちた行（分類・座標つき）。画面はこれだけで「境界を動かすとどの行が
+            # 残る／戻るか」をサーバーに聞かずに描ける。⚠️ 入れるのは判断に効く2種だけ：
+            # 本文（残したいもの）と番号（境界を下げると戻るもの）。反復は余白と無関係に
+            # 落ち続け、数字ラベルは戻っても害がない（→ 上の衝突判定と同じ理屈）。
+            # 全部入れると柱の多い冊で数千行になり、キャッシュも画面も無駄に重くなる
+            "行": ([_row(r, "本文") for r in content]
+                   + [_row(r, "番号") for r in pagenums]),
         }
     return out
 

@@ -28,9 +28,13 @@ PDF_DIR = DATA / "pdf"
 CONF_DIR = DATA / "設定"
 CACHE_DIR = DATA / ".cache"
 
-# 抽出単位（L2）の手作業と確認印は extract_doc の結果を変えないので、署名から外す。
-# 入れると「1件確認するたびに全文解析し直し」になる
-L2_ONLY_FIELDS = ("unit_merges", "unit_excludes", "unit_checks")
+# extract_doc の結果を**変えない**フィールドは署名から外す：
+#   ・unit_*      … 抽出単位（L2）の手作業と確認印。入れると「1件確認するたびに全文解析し直し」
+#   ・boundary_check・task_states … 人の判断の**記録**（切り取りと除外・記録パネル）。
+#     入れると「問題なし」と記録しただけで全冊が要再解析になる（2026-08-27 に実際に起きた。
+#     この2つを直す判断＝header_y や skip_pages を変えたときは、そちらが署名を変える）
+L2_ONLY_FIELDS = ("unit_merges", "unit_excludes", "unit_checks",
+                  "boundary_check", "task_states")
 
 
 def set_data_dir(path):

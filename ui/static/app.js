@@ -2999,31 +2999,54 @@ const AU = { docs: [], sets: {}, byDoc: {}, curKey: null, t0: 0, kw: null,
              reasons: null,   // core.OP_REASONS（ジョブの応答に同梱される。→ auReasons）
              pageData: null };// いま右に出しているページの解析結果（繋ぐ操作の照合に使う）
 
-// ⚠️ 確認モードの入口にゲート：切り取り未点検の冊があれば、先に点検へ誘導する。
+// ⚠️ 確認モードの入口にゲート：切り取りと除外が済んでいない冊があれば、先にそちらへ誘導する。
 //    「フッターで本文が切れている」という発想は抜けやすい（2026-08-26 に実際に見落とした）
 $("auditBtn").onclick = () => {
   const targets = SEL.size ? [...SEL] : null;
   const un = bdUnchecked(targets);
   if (un.length) {
-    modal("先に「切り取りの点検」をどうぞ", el(`<p class="note">
-      対象のうち <b>${un.length}冊</b>が、ヘッダー・フッターの切り取りをまだ点検していません。<br>
-      切り取り線が本文を巻き込んでいると、<b>文が途中で切れたまま</b>確認・書き出しに進んでしまいます
+    modal("先に「切り取りと除外」をどうぞ", el(`<p class="note">
+      対象のうち <b>${un.length}冊</b>が、切り取りと除外（ヘッダー・フッターの境界と除外ページ）を
+      まだ済ませていません。<br>
+      境界が本文を巻き込んでいると、<b>文が途中で切れたまま</b>確認・書き出しに進んでしまいます
       （実例：D社 2024 p76 — 段の最後の2行がフッター扱いで消えていました）。</p>`), [
-      { label: `点検する（${un.length}冊）`, kind: "primary", run: () => openBoundary(un) },
-      { label: "点検せずに進む", kind: "ghost", run: () => openAudit(targets) },
+      { label: "切り取りと除外を開く", kind: "primary", run: () => openPrep() },
+      { label: "済ませずに進む", kind: "ghost", run: () => openAudit(targets) },
     ]);
     return;
   }
   openAudit(targets);
 };
 
-// ---------- 切り取りの点検（2026-08-26 追加） ----------
-// きっかけ：D社 2024 p76 で段の最後の2行が footer_margin に巻き込まれ、生成AIを含む
-// 文が途中で切れたまま抽出されていた。全冊調査では50冊前後に同種の取りこぼし
-// （検索語入りの行も8件）。診断はサーバー（core.boundary_scan）が機械的に行い、
-// **適用するかは人が文書ごとに決める**。判断は設定JSONの boundary_check に残る。
+// ---------- 切り取りと除外（2026-08-27 に専用画面へ。旧「切り取りの点検」） ----------
+// **原本を見ながら、冊ごとに「フッター境界・ヘッダー境界・除外ページ（表紙・目次）」の
+// 3つを決めて消化していく画面。** 3つ揃うと自動でチェック済みタブへ移る。
+// 判断は設定JSONの boundary_check（除外は skip_pages・task_states）に日付つきで残る。
+//
+// きっかけ（2026-08-26）：D社 2024 p76 で段の最後の2行が footer_margin に巻き込まれ、
+// 生成AIを含む文が途中で切れたまま抽出されていた（同種の取りこぼしが50冊前後）。
+// モーダル版は「開く」を押さないと原本が見えず、1冊ごとの往復がストレスだった（2026-08-27 本人）。
+// → 一覧の中で原本を開き、境界線をその場でドラッグできる形に作り直した。
 
-const BD_CHANGED = new Set();        // この画面で余白を変えた冊（解析の作り直しを促す）
+const PREP = {
+  sum: null,           // /api/prep の一覧（軽量）
+  full: {},            // name → /api/boundary/<name>（開いた冊だけ）
+  pend: {},            // name → {header, footer, skips: Map(page→理由)} 画面上の未記録の値
+  changed: new Set(),  // 設定を変えた冊（「解析を作り直す」の対象）
+  tab: "todo",
+  cur: null,           // 作業ビューで開いている冊
+};
+
+const PREP_SIDE_KEY = { footer: "footer_margin", header: "header_y" };
+const PREP_SIDE_JP = { footer: "フッター", header: "ヘッダー" };
+
+// el() は DocumentFragment を返す（dataset や style を触れない）。
+// この画面は作った要素に直接触るので、要素そのものを返す版を使う
+const el1 = (html) => el(html).firstElementChild;
+
+// 完了＝3つの判断が揃っていること。旧形式（"判断" 1本＝2026-08-26 以前）も完了と数える
+const prepComplete = (bc) =>
+  !!bc && ("判断" in bc || ["フッター", "ヘッダー", "ページ"].every((k) => k in bc));
 
 function bdUnchecked(targets) {
   const names = targets || DOCS.map((d) => d.name);
@@ -3035,145 +3058,738 @@ function bdUnchecked(targets) {
 
 function updateBdUI() {
   const n = bdUnchecked(null).length;
-  $("bdBtnLabel").textContent = n ? `切り取りの点検（未 ${n}冊）` : "切り取りの点検";
+  $("bdBtnLabel").textContent = n ? `切り取りと除外（未 ${n}冊）` : "切り取りと除外";
   $("bdBtn").classList.toggle("attn", n > 0);
 }
 
-$("bdBtn").onclick = () => openBoundary(SEL.size ? [...SEL] : null);
+$("bdBtn").onclick = () => openPrep();
+// 一覧へ戻る：作業ビューを開いていれば冊の一覧へ、一覧ならホーム（PDFを選ぶ）へ
+$("prepBack").onclick = () => { if (!$("prepWork").hidden) closePrepWork(); else closePrep(); };
+$("ppwBack").onclick = () => closePrepWork();
+$("prepTabTodo").onclick = () => { PREP.tab = "todo"; prepRender(); };
+$("prepTabDone").onclick = () => { PREP.tab = "done"; prepRender(); };
 
-async function openBoundary(names) {
-  let r;
-  try {
-    r = await runJob({ kind: "boundary", docs: names || null },
-      names ? `選んだ${names.length}冊の切り取りを点検しています…`
-            : "全冊の切り取り（ヘッダー・フッター）を点検しています…");
-  } catch (e) { toast(String(e.message || e), "err"); return; }
-  bdShow(r.docs || []);
+async function openPrep() {
+  $("pane-open").hidden = true;
+  $("prep").hidden = false;
+  prepUpdateRebuild();
+  try { await prepLoad(); }
+  catch (e) { toast(String(e.message || e), "err"); }
 }
 
-function bdSideLine(d, side, label) {
-  const s = d[side];
-  if (!s) return "";
-  if (!s["件数"]) return `<div class="bd-side clean">✓ ${label}：本文の巻き込みなし</div>`;
-  const kw = s["検索語入り"] ? `・<b class="bd-kw">検索語入り ${s["検索語入り"]}件</b>` : "";
-  let tail = "";
-  if (s["干渉"]) {
-    tail = `<span class="bd-clash">⚠ ページ番号が境界の内側にあり、値だけでは分けられません（「開く」で原本を確認）</span>`;
-  } else if (s["提案"] != null) {
-    // ⚠️ 適用はサイドごと。実例（D社 2024）：フッターは本文の巻き込みで適用すべきだが、
-    //    ヘッダーの「本文らしき行」はアクティブタブの柱（位置が微妙に違い反復から漏れる）で、
-    //    適用してはいけない。まとめて1ボタンにすると、こういう非対称を人が選べない
-    tail = `<span class="bd-prop">${label === "フッター" ? "余白" : "上端"} ${s["現在"]} → <b>${s["提案"]}</b></span>
-      <button class="mini primary bd-apply" data-side="${side}">この値を適用</button>`;
+function closePrep() {
+  if (PREP.changed.size) {
+    const n = PREP.changed.size;
+    modal("変えた設定の解析がまだです", el(`<p class="note">
+      余白・除外ページを変えた <b>${n}冊</b>の解析キャッシュが古いままです。<br>
+      今すぐ作り直すか、あとに回すか選んでください（あとに回しても、次にヒットを集めるとき
+      自動で作り直されます。そのぶん待ち時間がそちらに移ります）。</p>`), [
+      { label: `作り直してから戻る（${n}冊）`, kind: "primary",
+        run: async () => { await prepRebuild(); prepReallyClose(); } },
+      { label: "あとで作り直す（そのまま戻る）", kind: "ghost", run: prepReallyClose },
+    ]);
+    return;
   }
-  const ex = (s["例"] || []).map((e) =>
-    `<div class="bd-ex">p${e["ページ"]} ${e["検索語"] ? "🔎" : ""}${esc(e.text)}</div>`).join("");
-  return `<div class="bd-side warn">⚠ ${label}：本文らしき行 <b>${s["件数"]}件</b>${kw} ${tail}
-    ${ex ? `<details><summary class="hint">落ちている行の例（長い順）</summary>${ex}</details>` : ""}</div>`;
+  prepReallyClose();
 }
 
-function bdShow(docs) {
-  // 並び：検索語入り → 件数の多い順。判断済みは最後（たたむ）
-  const score = (d) => {
-    const f = d.footer || {}, h = d.header || {};
-    return (f["検索語入り"] || 0) * 100000 + (h["検索語入り"] || 0) * 100000
-         + (f["件数"] || 0) + (h["件数"] || 0);
-  };
-  docs.sort((a, b) => (!!a["判断"]) - (!!b["判断"]) || score(b) - score(a));
-  const wrap = document.createElement("div");
-  wrap.className = "bdlist";
-  wrap.appendChild(el(`<p class="note">機械の診断です。落ちた行を
-    <b>備品</b>（柱・ロゴ・ページ番号＝切り捨てが正しい）と<b>本文らしき行</b>に分け、
-    本文を全部残せる境界を提案します。<b>適用するかは1冊ずつ判断してください</b>
-    （判断は設定JSONの <code>boundary_check</code> に日付つきで残ります）。</p>`));
-  for (const d of docs) {
-    const box = document.createElement("div");
-    const f = d.footer || {}, h = d.header || {};
-    const clean = !(f["件数"] || h["件数"]);
-    box.className = "bd-doc" + (d["判断"] ? " done" : "");
-    box.innerHTML = `<div class="bd-head"><b>${esc(d.name)}</b>
-        ${d["判断"] ? `<span class="tag">済 ${esc(d["判断"]["判断"] || "")}（${esc(d["判断"]["日"] || "")}）</span>` : ""}
-      </div>` +
-      bdSideLine(d, "footer", "フッター") + bdSideLine(d, "header", "ヘッダー") +
-      `<div class="bd-acts">
-        <button class="mini ghost bd-ok">${clean ? "問題なしと記録" : "このままでよい（問題なし）"}</button>
-        <button class="mini ghost bd-open">開く</button>
-      </div>`;
-    const done = (note) => {
-      box.classList.add("done");
-      box.querySelector(".bd-head").insertAdjacentHTML("beforeend",
-        ` <span class="tag">済 ${esc(note)}</span>`);
-    };
-    for (const ap of box.querySelectorAll(".bd-apply")) {
-      ap.onclick = () => bdDecide(d, ap.dataset.side).then((note) => {
-        if (note) { ap.disabled = true; done(note); }
-      });
+function prepReallyClose() {
+  $("prep").hidden = true;
+  $("pane-open").hidden = false;
+  loadDocs();                       // 一覧のバッジ（点検・要再解析）を更新する
+}
+
+async function prepLoad() {
+  $("prepList").innerHTML = `<p class="note empty">一覧を読み込んでいます…</p>`;
+  let r = await api("/api/prep");
+  // 診断がまだの冊だけジョブで走らせる（結果はディスクに残る＝次からは一瞬で開く）
+  const need = r.docs.filter((d) => !d["診断済み"]).map((d) => d.name);
+  if (need.length) {
+    const jr = await runJob({ kind: "boundary", docs: need },
+      `${need.length}冊のヘッダー・フッターを診断しています…（結果は残るので、次からは一瞬で開きます）`);
+    for (const d of (jr && jr.docs) || []) PREP.full[d.name] = d;
+    r = await api("/api/prep");
+  }
+  PREP.sum = r.docs;
+  prepRender();
+}
+
+const prepKwN = (d) => ((d.footer || {})["検索語入り"] || 0) + ((d.header || {})["検索語入り"] || 0);
+const prepCntN = (d) => ((d.footer || {})["件数"] || 0) + ((d.header || {})["件数"] || 0);
+
+function prepProgress() {
+  const docs = PREP.sum || [];
+  const done = docs.filter((d) => d["完了"]).length;
+  $("prepCount").textContent = docs.length ? `済 ${done} / ${docs.length}冊` : "";
+  $("prepBarFill").style.width = docs.length ? `${done / docs.length * 100}%` : "0%";
+  $("prepCntTodo").textContent = docs.length - done;
+  $("prepCntDone").textContent = done;
+}
+
+function prepRender() {
+  const docs = PREP.sum || [];
+  prepProgress();
+  $("prepTabTodo").classList.toggle("on", PREP.tab === "todo");
+  $("prepTabDone").classList.toggle("on", PREP.tab === "done");
+  let list;
+  if (PREP.tab === "todo") {
+    // 並び順は画面にも明記する（下の $("prepOrder")）。急ぐ冊＝検索語を巻き込んでいる冊が先頭
+    list = docs.filter((d) => !d["完了"]).sort((a, b) =>
+      (prepKwN(b) > 0) - (prepKwN(a) > 0) || prepCntN(b) - prepCntN(a)
+      || a.name.localeCompare(b.name, "ja"));
+    $("prepOrder").textContent =
+      "並び順：検索語を巻き込んでいる冊 → 巻き込みが多い冊 → 名前順";
+  } else {
+    const day = (d) => (d["判断"] && d["判断"]["日"]) || "";
+    list = docs.filter((d) => d["完了"]).sort((a, b) =>
+      day(b).localeCompare(day(a)) || a.name.localeCompare(b.name, "ja"));
+    $("prepOrder").textContent = "並び順：判断した日が新しい順";
+  }
+  const box = $("prepList");
+  box.innerHTML = "";
+  if (!list.length) {
+    box.innerHTML = `<p class="note empty">${PREP.tab === "todo"
+      ? "未チェックはありません。全冊そろいました — 「ヒットを確認」に進めます。"
+      : "まだチェック済みの冊はありません。"}</p>`;
+    return;
+  }
+  for (const d of list) box.appendChild(prepCard(d));
+}
+
+function prepDecChips(bc) {
+  return ["フッター", "ヘッダー", "ページ"].map((k) => {
+    const on = !!bc && (("判断" in bc) || (k in bc));
+    return `<span class="pp-chip${on ? " on" : ""}">${on ? ICON("check") : ""}${k}</span>`;
+  }).join("");
+}
+
+function prepCard(d) {
+  const card = el1(`<div class="prep-card"></div>`);
+  card.dataset.name = d.name;
+  const kw = prepKwN(d), cnt = prepCntN(d);
+  const chips = !d["診断済み"] ? `<span class="tag dim">未診断</span>`
+    : cnt ? (kw ? `<span class="tag kwtag">検索語入り ${kw}件</span>` : "")
+            + `<span class="tag warn">巻き込み ${cnt}件</span>`
+    : `<span class="tag ok">巻き込みなし</span>`;
+  card.innerHTML =
+    `<button class="prep-head" type="button" title="クリックで原本を開いて判断する">
+      <span class="pp-chev">${ICON("chev-r")}</span>
+      <b class="pp-name">${esc(d.name)}</b>
+      <span class="pp-tags">${chips}</span>
+      <span class="spacer"></span>
+      <span class="pp-decs">${prepDecChips(d["判断"])}</span>
+    </button>`;
+  card.querySelector(".prep-head").onclick = () => openPrepWork(d.name);
+  return card;
+}
+
+// --- 1冊の作業ビュー（一覧 → クリックで画面いっぱいに開く。2026-08-27 夜） ------
+// アコーディオンの中に2カラムを詰めると、狭い幅で崩れ・広い幅で余りが出て作業しづらい
+// （本人の指摘）。→ 個別の「開く」と同じ発想で、左パネル＋原本ビューアの全画面に変えた。
+
+function prepRoot(name) {
+  return PREP.cur === name ? $("ppwMain") : null;
+}
+
+function ppwChipsUpdate(name) {
+  const row = (PREP.sum || []).find((x) => x.name === name);
+  const bc = (row && row["判断"]) || (PREP.full[name] && PREP.full[name]["判断"]);
+  $("ppwChips").innerHTML = prepDecChips(bc);
+}
+
+async function openPrepWork(name) {
+  PREP.cur = name;
+  $("prepHome").hidden = true;
+  $("prepWork").hidden = false;
+  $("ppwName").textContent = name;
+  ppwChipsUpdate(name);
+  const main = $("ppwMain");
+  main.innerHTML = `<p class="note empty"><span class="minispin"></span>
+    この冊の診断と原本を読み込んでいます…（キャッシュが無い初回だけ数秒かかります）</p>`;
+  if (!PREP.full[name]) {
+    try {
+      PREP.full[name] = await api(`/api/boundary/${encodeURIComponent(name)}`);
+    } catch (e) {
+      main.innerHTML = `<p class="note">読み込みに失敗しました：${esc(String(e.message || e))}</p>`;
+      return;
     }
-    box.querySelector(".bd-ok").onclick = () => bdDecide(d, null).then((note) => {
-      if (note) {
-        done(note);
-        for (const b of box.querySelectorAll(".bd-acts .bd-ok")) b.disabled = true;
-      }
-    });
-    box.querySelector(".bd-open").onclick = () => { closeModal(); openDoc(d.name); };
-    wrap.appendChild(box);
   }
-  modal("切り取りの点検 — ヘッダー・フッターが本文を巻き込んでいないか", wrap, [
-    { label: "変えた設定で解析を作り直す", kind: "primary", run: bdRebuild },
-    { label: "閉じる", kind: "ghost" },
-  ]);
+  if (PREP.cur !== name) return;             // 読み込み中に一覧へ戻っていた
+  const pay = PREP.full[name];
+  const pend = PREP.pend[name] || (PREP.pend[name] = {
+    header: pay["設定"].header_y,
+    footer: pay["設定"].footer_margin,
+    skips: null,
+  });
+  if (!pend.skips) {
+    pend.skips = new Map();
+    for (const r of pay["除外済み"] || []) {
+      if (r.reason === "表紙" || r.reason === "目次") pend.skips.set(Number(r.page), r.reason);
+    }
+  }
+  main.innerHTML = "";
+  main.appendChild(prepPanel(name));
+  main.appendChild(prepViewer(name, main));
+  queueMicrotask(() => { prepSyncBounds(name); prepSyncSkips(name); });
 }
 
-/** 判断を設定JSONに書く。side="footer"|"header" なら提案値をそのサイドだけ反映、
- *  null なら「問題なし」。戻り値＝記録した判断（失敗なら null）。
- *  ⚠️ 2回目の判断は前の判断に**追記**する（フッター適用→ヘッダーは問題なし、が1冊に共存する） */
-async function bdDecide(d, side) {
-  const name = d.name;
+function closePrepWork() {
+  const main = $("ppwMain");
+  if (main._io) { main._io.disconnect(); main._io = null; }   // 遅延読み込みを止める
+  main.innerHTML = "";
+  PREP.cur = null;
+  $("prepWork").hidden = true;
+  $("prepHome").hidden = false;
+  prepRender();                    // 並び直し（完了した冊はチェック済みタブへ移っている）
+}
+
+// --- カードの中身＝左：判断パネル／右：大きな原本ビューア（2026-08-27 夕方に作り直し） ---
+// 本人の要望：原本を大きく（拡大率つき）・ヘッダーも線でドラッグ・上下の線を同時にいじって
+// **一度に記録**・除外ページも実物を見ながら決めたい。
+// → サイドごと／目的ごとの小さなページ画像をやめ、**1冊＝1本のビューア**に統一した。
+// 全ページを縦に並べ（画像は見えたときだけ取得）、どのページにも上下2本の境界線が出る。
+
+const PREP_BASEW = 840;      // 拡大率100%のときのページ幅(px)
+
+let PREPZOOM = (() => {
+  const v = parseInt(localStorage.getItem("prepZoom"), 10);
+  return v >= 50 && v <= 300 ? v : 100;
+})();
+
+// ページ画像を取りに行くときの倍率。表示の拡大率に合わせて上げる（大きく見ても
+// ぼやけないように）。0.2刻みに丸めるのはサーバー側の画像キャッシュに当てるため
+const prepReqZoom = () => Math.min(3, Math.max(1.2, Math.round(1.2 * PREPZOOM / 100 * 5) / 5));
+const prepImgUrl = (name, p) =>
+  `/api/doc/${encodeURIComponent(name)}/page/${p}.jpg?zoom=${prepReqZoom()}`;
+
+const prepCardEl = (name) =>
+  $("prepList").querySelector(`.prep-card[data-name="${CSS.escape(name)}"]`);
+
+// --- 左：判断パネル（① 境界 ② 除外ページ） ------------------------------------
+
+function prepPanel(name) {
+  const pay = PREP.full[name];
+  const bc = pay["判断"] || {};
+  const bDecided = ("判断" in bc) ? bc["判断"]
+    : (bc["ヘッダー"] || bc["フッター"])
+      ? `ヘッダー：${bc["ヘッダー"] || "—"}／フッター：${bc["フッター"] || "—"}` : null;
+  const pDecided = ("判断" in bc) ? "点検済み（前の画面）" : bc["ページ"];
+  const others = (pay["除外済み"] || []).filter((r) => r.reason !== "表紙" && r.reason !== "目次");
+
+  const sideRow = (s, label) => {
+    const d = pay[s] || {};
+    return `<div class="pp-brow" data-side="${s}">
+      <label>${label} <input class="pp-val" type="number" min="0" step="1"> pt</label>
+      ${d["提案"] != null && d["提案"] !== d["現在"]
+        ? `<button class="mini ghost pp-sug">提案 ${d["提案"]}</button>` : ""}
+      <span class="pp-live hint"></span>
+      ${d["干渉"] ? `<div class="pp-clash">ページ番号が本文より内側にあり、値だけでは分けられません。
+        原本を見てどちらを取るか決めてください（戻った番号は短いので、たいてい単位には入りません）</div>` : ""}
+    </div>`;
+  };
+
+  const panel = el1(`<div class="pp-panel">
+    <section class="pp-sec" data-sec="bounds">
+      <h4><span class="pp-step">1</span>境界（ヘッダー・フッター）
+        ${bDecided ? `<span class="tag ok">${ICON("check")}記録済み</span>` : ""}</h4>
+      ${bDecided ? `<p class="hint pp-prev">前回の判断：${esc(bDecided)}</p>` : ""}
+      ${sideRow("header", "ヘッダー上端")}
+      ${sideRow("footer", "フッター余白")}
+      <div class="pp-jump"></div>
+      <div class="pp-acts"><button class="mini primary pp-rec-b"></button></div>
+      <p class="hint">上下まとめて記録します（設定JSONの boundary_check に日付つき）</p>
+    </section>
+    <section class="pp-sec" data-sec="pages">
+      <h4><span class="pp-step">2</span>除外ページ（表紙・目次）
+        ${pDecided ? `<span class="tag ok">${ICON("check")}記録済み：${esc(pDecided)}</span>` : ""}</h4>
+      <p class="pp-sum">右の原本で、除外中のページは暗く出ます。ページ見出しの「除外する」で追加、
+        暗い覆いをクリックで解除。ここで決めるのは<b>表紙と目次だけ</b>です。</p>
+      ${others.length ? `<p class="hint pp-others">ほかの理由の除外（ここでは変えません）：
+        ${others.map((r) => `<button class="mini ghost pp-jchip" data-p="${r.page}"
+          title="クリックでこのページへ">p${r.page} ${esc(r.reason || "理由なし")}</button>`).join(" ")}</p>` : ""}
+      <div class="pp-skipstat hint"></div>
+      <div class="pp-acts"><button class="mini primary pp-rec-p"></button></div>
+    </section>
+    <p class="hint">表の範囲や別の理由の除外など、もっと細かく直したいときは
+      <button class="mini ghost pp-open">この冊を開く</button></p>
+  </div>`);
+
+  // 巻き込みページへのジャンプ（検索語入り → 境界に近い順。ビューアをその場でスクロール）
+  const pgs = new Map();
+  for (const s of ["header", "footer"]) {
+    for (const r of (pay[s] || {})["行"] || []) {
+      if (r["分類"] !== "本文") continue;
+      const g = pgs.get(r["ページ"]) || { kw: false, depth: 1e9 };
+      g.kw = g.kw || r["検索語"];
+      g.depth = Math.min(g.depth, r["深さ"]);
+      pgs.set(r["ページ"], g);
+    }
+  }
+  const order = [...pgs.entries()]
+    .sort((a, b) => (b[1].kw - a[1].kw) || (a[1].depth - b[1].depth)).map(([p]) => p);
+  const jump = panel.querySelector(".pp-jump");
+  if (order.length) {
+    jump.appendChild(el(`<span class="hint">巻き込みページ（クリックで移動）：</span>`));
+    for (const p of order.slice(0, 14)) {
+      const b = el1(`<button class="mini ghost pp-jchip${pgs.get(p).kw ? " kw" : ""}"
+        title="${pgs.get(p).kw ? "検索語を含む行が切られています" : "本文らしき行が切られています"}">p${p}</button>`);
+      b.onclick = () => prepJump(name, p);
+      jump.appendChild(b);
+    }
+    if (order.length > 14) jump.appendChild(el(`<span class="hint">他 ${order.length - 14}ページ</span>`));
+  }
+
+  for (const s of ["header", "footer"]) {
+    const row = panel.querySelector(`.pp-brow[data-side="${s}"]`);
+    row.querySelector(".pp-val").onchange = (e) => prepSetVal(name, s, parseFloat(e.target.value));
+    const sug = row.querySelector(".pp-sug");
+    if (sug) sug.onclick = () => prepSetVal(name, s, (pay[s] || {})["提案"]);
+  }
+  panel.querySelector(".pp-rec-b").onclick = () => prepRecordBounds(name);
+  panel.querySelector(".pp-rec-p").onclick = () => prepRecordSkips(name);
+  panel.querySelector(".pp-open").onclick = () => { prepReallyClose(); openDoc(name); };
+  for (const b of panel.querySelectorAll(".pp-others .pp-jchip")) {
+    b.onclick = () => prepJump(name, parseInt(b.dataset.p, 10));
+  }
+  return panel;
+}
+
+// --- 右：ビューア（全ページ・遅延読み込み・拡大率） ----------------------------
+
+function prepViewer(name, body) {
+  const pay = PREP.full[name];
+  const total = pay["総ページ"] || 0;
+  const v = el1(`<div class="pp-viewer">
+    <div class="pp-vtools">
+      <button class="ghost mini pp-zout" title="縮小">−</button>
+      <input class="pp-zoom" type="range" min="50" max="300" step="10" title="表示の拡大率">
+      <button class="ghost mini pp-zin" title="拡大">＋</button>
+      <span class="pp-zpct hint"></span>
+      <span class="spacer"></span>
+      <span class="hint">青い線をドラッグで境界を調整／Ctrl+ホイールで拡大縮小</span>
+    </div>
+    <div class="pp-scroll"></div>
+  </div>`);
+  const scroll = v.querySelector(".pp-scroll");
+
+  // 画像は**見えたページだけ**取りに行く（300ページの冊でも開いた瞬間は軽い）
+  const io = new IntersectionObserver((ents) => {
+    for (const e of ents) {
+      if (!e.isIntersecting) continue;
+      const img = e.target;
+      if (!img.src) { img.src = prepImgUrl(name, img.dataset.page); img.dataset.rz = prepReqZoom(); }
+      io.unobserve(img);
+    }
+  }, { root: scroll, rootMargin: "900px 0px" });
+  body._io = io;
+
+  for (let p = 1; p <= total; p++) scroll.appendChild(prepVPage(name, p, io));
+
+  // 拡大率。表示はCSS変数1つで一括（即応）。読み込み済みの画像は、倍率が大きく
+  // 変わったときだけ差し替える（サーバーに無駄なレンダリングをさせない）
+  const slider = v.querySelector(".pp-zoom"), pct = v.querySelector(".pp-zpct");
+  const setZ = (z) => {
+    PREPZOOM = Math.max(50, Math.min(300, Math.round(z / 10) * 10));
+    try { localStorage.setItem("prepZoom", String(PREPZOOM)); } catch (e) { /* 保存できなくても動く */ }
+    slider.value = PREPZOOM;
+    pct.textContent = `${PREPZOOM}%`;
+    scroll.style.setProperty("--pz", PREPZOOM / 100);
+    const rz = prepReqZoom();
+    for (const img of scroll.querySelectorAll("img[src]")) {
+      if (Math.abs(parseFloat(img.dataset.rz || 0) - rz) >= 0.4) {
+        img.src = prepImgUrl(name, img.dataset.page);
+        img.dataset.rz = rz;
+      }
+    }
+  };
+  slider.oninput = () => setZ(parseInt(slider.value, 10));
+  v.querySelector(".pp-zout").onclick = () => setZ(PREPZOOM - 10);
+  v.querySelector(".pp-zin").onclick = () => setZ(PREPZOOM + 10);
+  scroll.addEventListener("wheel", (e) => {
+    if (!e.ctrlKey) return;
+    e.preventDefault();
+    setZ(PREPZOOM + (e.deltaY < 0 ? 10 : -10));
+  }, { passive: false });
+  setZ(PREPZOOM);
+  return v;
+}
+
+/** ビューアの1ページ：原本画像＋上下の境界線（ドラッグ可）＋落ちた行の枠＋除外の覆い。 */
+function prepVPage(name, p, io) {
+  const pay = PREP.full[name];
+  const [w, h] = (pay["寸法"] || {})[String(p)] || [595, 842];
+  const rows = [];
+  for (const s of ["header", "footer"]) {
+    for (const r of (pay[s] || {})["行"] || []) {
+      if (r["ページ"] === p && (r["分類"] === "本文" || r["分類"] === "番号")) rows.push({ ...r, side: s });
+    }
+  }
+  const cand = (pay["除外候補"] || []).find((c) => c.page === p);
+  const fig = el1(`<figure class="pp-vpage" data-page="${p}">
+    <figcaption>p${p}
+      ${rows.some((r) => r["検索語"]) ? `<span class="pp-kw">検索語入り</span>` : ""}
+      ${cand ? `<span class="pp-cand" title="根拠：${esc(cand.why || "")}">候補：${esc(cand.reason)}</span>` : ""}
+      <span class="spacer"></span>
+      <button class="mini ghost pp-exbtn">除外する</button>
+    </figcaption>
+    <div class="pp-canvas" style="aspect-ratio:${w} / ${h}">
+      <img data-page="${p}" alt="p${p}">
+      <div class="pp-exd" hidden><div class="pp-exd-tag"></div></div>
+    </div></figure>`);
+  const cv = fig.querySelector(".pp-canvas");
+  io.observe(fig.querySelector("img"));
+
+  for (const r of rows) {
+    const [x0, y0, x1, y1] = r.rect;
+    const box = el1(`<div class="pp-rect" title="${esc(r.text)}"></div>`);
+    box.style.left = `${x0 / w * 100}%`;
+    box.style.top = `${y0 / h * 100}%`;
+    box.style.width = `${(x1 - x0) / w * 100}%`;
+    box.style.height = `${(y1 - y0) / h * 100}%`;
+    box.dataset.depth = r["深さ"];
+    box.dataset.cls = r["分類"];
+    box.dataset.side = r.side;
+    cv.appendChild(box);
+  }
+
+  for (const side of ["header", "footer"]) {
+    const line = el1(`<div class="pp-vline" data-side="${side}"
+      title="ドラッグで${side === "header" ? "ヘッダー" : "フッター"}の境界を動かせます"><span class="pp-line-tag"></span></div>`);
+    line.dataset.h = h;
+    line.onpointerdown = (e) => {
+      e.preventDefault();
+      line.setPointerCapture(e.pointerId);
+      line.classList.add("drag");
+      line.onpointermove = (ev) => {
+        const r = cv.getBoundingClientRect();
+        const frac = Math.min(1, Math.max(0, (ev.clientY - r.top) / r.height));
+        let val = Math.round(side === "footer" ? h * (1 - frac) : h * frac);
+        val = Math.max(0, Math.min(Math.round(h * 0.45), val));
+        prepSetVal(name, side, val);
+      };
+      line.onpointerup = () => {
+        line.onpointermove = null;
+        line.onpointerup = null;
+        line.classList.remove("drag");
+      };
+    };
+    cv.appendChild(line);
+  }
+
+  // 除外の付け外し。覆い（暗い部分）のクリックで解除、理由は覆いの上で切り替え
+  fig.querySelector(".pp-exbtn").onclick = () => prepToggleSkip(name, p);
+  fig.querySelector(".pp-exd").onclick = (e) => {
+    const pend = PREP.pend[name];
+    const rz = e.target.closest(".rz");
+    if (rz) { pend.skips.set(p, rz.dataset.r); prepSyncSkips(name); return; }
+    if (pend.skips.has(p)) { pend.skips.delete(p); prepSyncSkips(name); }
+  };
+  return fig;
+}
+
+function prepJump(name, p) {
+  const root = prepRoot(name);
+  const scroll = root && root.querySelector(".pp-scroll");
+  const fig = scroll && scroll.querySelector(`.pp-vpage[data-page="${p}"]`);
+  if (!fig) return;
+  scroll.scrollTo({ top: fig.offsetTop - 8, behavior: "smooth" });
+  fig.classList.remove("flash");
+  void fig.offsetWidth;                       // アニメーションを毎回やり直すための再計算
+  fig.classList.add("flash");
+}
+
+function prepToggleSkip(name, p) {
+  const pay = PREP.full[name], pend = PREP.pend[name];
+  if (pend.skips.has(p)) pend.skips.delete(p);
+  else {
+    const cand = (pay["除外候補"] || []).find((c) => c.page === p);
+    pend.skips.set(p, cand ? cand.reason : (p === 1 || p === (pay["総ページ"] || 0) ? "表紙" : "目次"));
+  }
+  prepSyncSkips(name);
+}
+
+// --- 値を変えたら画面をそろえる（判定は全部ブラウザ側＝ドラッグに即応する） ------
+
+function prepSetVal(name, side, v) {
+  const pay = PREP.full[name];
+  if (!Number.isFinite(v) || v < 0) v = pay["設定"][PREP_SIDE_KEY[side]];
+  PREP.pend[name][side] = Math.max(0, Math.min(400, Math.round(v)));
+  prepSyncBounds(name);
+}
+
+function prepSyncBounds(name) {
+  const card = prepRoot(name);
+  if (!card) return;
+  const pay = PREP.full[name], pend = PREP.pend[name];
+  for (const s of ["header", "footer"]) {
+    const vv = pend[s], cur = pay["設定"][PREP_SIDE_KEY[s]];
+    const row = card.querySelector(`.pp-brow[data-side="${s}"]`);
+    if (!row) continue;
+    row.querySelector(".pp-val").value = vv;
+    let cut = 0, back = 0;
+    for (const r of (pay[s] || {})["行"] || []) {
+      if (r["分類"] === "本文" && r["深さ"] < vv) cut++;
+      else if (r["分類"] === "番号" && r["深さ"] >= vv) back++;
+    }
+    row.querySelector(".pp-live").innerHTML =
+      `${vv !== cur ? `${cur} → <b>${vv}</b>：` : ""}切られる本文 <b class="${cut ? "pp-bad" : "pp-ok"}">${cut}件</b>・戻る番号 ${back}件`;
+  }
+  for (const line of card.querySelectorAll(".pp-vline")) {
+    const s = line.dataset.side, hh = parseFloat(line.dataset.h), vv = pend[s];
+    line.style.top = `${(s === "footer" ? 1 - vv / hh : vv / hh) * 100}%`;
+    line.querySelector(".pp-line-tag").textContent = `${s === "footer" ? "下" : "上"}から ${vv}pt`;
+  }
+  for (const box of card.querySelectorAll(".pp-rect")) {
+    const vv = pend[box.dataset.side];
+    const depth = parseFloat(box.dataset.depth);
+    if (box.dataset.cls === "本文") {
+      box.classList.toggle("cut", depth < vv);
+      box.classList.toggle("save", depth >= vv);
+    } else {
+      box.classList.toggle("back", depth >= vv);
+      box.classList.toggle("gone", depth < vv);
+    }
+  }
+  const hCh = pend.header !== pay["設定"].header_y;
+  const fCh = pend.footer !== pay["設定"].footer_margin;
+  const btn = card.querySelector(".pp-rec-b");
+  if (btn) {
+    btn.textContent = (hCh || fCh)
+      ? `境界を記録する（ヘッダー ${hCh ? `${pay["設定"].header_y}→${pend.header}` : "そのまま"}・フッター ${fCh ? `${pay["設定"].footer_margin}→${pend.footer}` : "そのまま"}）`
+      : "境界を記録する（上下とも問題なし）";
+  }
+}
+
+function prepSyncSkips(name) {
+  const card = prepRoot(name);
+  if (!card) return;
+  const pay = PREP.full[name], pend = PREP.pend[name];
+  const others = new Map((pay["除外済み"] || [])
+    .filter((r) => r.reason !== "表紙" && r.reason !== "目次")
+    .map((r) => [Number(r.page), r.reason || "除外"]));
+  for (const fig of card.querySelectorAll(".pp-vpage")) {
+    const p = parseInt(fig.dataset.page, 10);
+    const sel = pend.skips.get(p), other = others.get(p);
+    const exd = fig.querySelector(".pp-exd");
+    const btn = fig.querySelector(".pp-exbtn");
+    if (sel) {
+      exd.hidden = false;
+      exd.classList.remove("ro");
+      exd.querySelector(".pp-exd-tag").innerHTML = `除外中：
+        <button class="rz${sel === "表紙" ? " on" : ""}" data-r="表紙">表紙</button>
+        <button class="rz${sel === "目次" ? " on" : ""}" data-r="目次">目次</button>`;
+      exd.title = "クリックで除外を解除（理由はボタンで切り替え）";
+      btn.hidden = true;
+    } else if (other) {
+      exd.hidden = false;
+      exd.classList.add("ro");
+      exd.querySelector(".pp-exd-tag").textContent = `除外中：${other}（この画面では変えません）`;
+      exd.title = "";
+      btn.hidden = true;
+    } else {
+      exd.hidden = true;
+      btn.hidden = false;
+    }
+  }
+  const sel = [...pend.skips.entries()].sort((a, b) => a[0] - b[0]);
+  const stat = card.querySelector(".pp-skipstat");
+  if (stat) {
+    // 除外中のページはチップ＝クリックでそのページへ飛べる（原本で確かめられるように）
+    stat.innerHTML = sel.length
+      ? `いまの選択：` + sel.map(([p, r]) =>
+          `<button class="mini ghost pp-jchip" data-p="${p}" title="クリックでこのページへ">p${p} ${esc(r)}</button>`).join(" ")
+      : "いまの選択：除外なし";
+    for (const b of stat.querySelectorAll(".pp-jchip")) {
+      b.onclick = () => prepJump(name, parseInt(b.dataset.p, 10));
+    }
+  }
+  const btn = card.querySelector(".pp-rec-p");
+  if (btn) btn.textContent = sel.length ? `この ${sel.length}ページの除外で記録する` : "除外なしで記録する";
+}
+
+// --- 記録（境界は上下まとめて1回。除外ページは従来どおり） ----------------------
+
+async function prepRecordBounds(name) {
+  const pay = PREP.full[name], pend = PREP.pend[name];
+  const notes = {};
+  for (const s of ["header", "footer"]) {
+    const cur = pay["設定"][PREP_SIDE_KEY[s]];
+    notes[s] = pend[s] !== cur
+      ? `${s === "header" ? "ヘッダー上端" : "フッター余白"} ${cur}→${pend[s]}`
+      : "問題なし";
+  }
+  const bc = await prepDecide(name, (st, b) => {
+    for (const s of ["header", "footer"]) {
+      if (pend[s] !== pay["設定"][PREP_SIDE_KEY[s]]) {
+        st[PREP_SIDE_KEY[s]] = pend[s];
+        PREP.changed.add(name);
+      }
+      b[PREP_SIDE_JP[s]] = notes[s];
+    }
+  });
+  if (!bc) return;
+  pay["設定"].header_y = pend.header;
+  pay["設定"].footer_margin = pend.footer;
+  prepSyncBounds(name);
+  const card = prepRoot(name);
+  const h4 = card && card.querySelector('.pp-sec[data-sec="bounds"] h4');
+  if (h4) {
+    const old = h4.querySelector(".tag");
+    if (old) old.remove();
+    h4.insertAdjacentHTML("beforeend", ` <span class="tag ok">${ICON("check")}記録済み</span>`);
+  }
+}
+
+async function prepRecordSkips(name) {
+  const pay = PREP.full[name], pend = PREP.pend[name];
+  const cands = pay["除外候補"] || [];
+  const sel = [...pend.skips.entries()].sort((a, b) => a[0] - b[0]);
+  const before = (pay["除外済み"] || [])
+    .filter((r) => r.reason === "表紙" || r.reason === "目次")
+    .map((r) => `${r.page}|${r.reason}`).sort().join(",");
+  const after = sel.map(([p, r]) => `${p}|${r}`).sort().join(",");
+  const bc = await prepDecide(name, (st, b) => {
+    const keep = (st.skip_pages || []).filter((r) => r.reason !== "表紙" && r.reason !== "目次");
+    const wasAuto = new Set((st.skip_pages || [])
+      .filter((r) => r.auto).map((r) => `${r.page}|${r.reason}`));
+    st.skip_pages = keep
+      .concat(sel.map(([p, r]) => wasAuto.has(`${p}|${r}`)
+        ? { page: p, reason: r, auto: true } : { page: p, reason: r }))
+      .sort((a, b) => a.page - b.page);
+    // 「記録」パネルと同じ task_states に結論を残す：除外があれば skip_pages から導かれる。
+    // 無ければ「候補があったのに残した」か「見た上で該当なし」かを分けて書く
+    const ts = (st.task_states || []).filter((t) => t.key !== "表紙" && t.key !== "目次");
+    for (const key of ["表紙", "目次"]) {
+      if (!sel.some(([, r]) => r === key)) {
+        ts.push({ key, state: cands.some((c) => c.reason === key) ? "残した" : "該当なし",
+                  memo: "切り取りと除外の画面で判断" });
+      }
+    }
+    st.task_states = ts;
+    b["ページ"] = sel.length ? sel.map(([p, r]) => `p${p} ${r}`).join("・") : "除外なし";
+    if (before !== after) PREP.changed.add(name);
+  });
+  if (!bc) return;
+  pay["除外済み"] = (pay["除外済み"] || [])
+    .filter((r) => r.reason !== "表紙" && r.reason !== "目次")
+    .concat(sel.map(([p, r]) => ({ page: p, reason: r })));
+  prepSyncSkips(name);
+  const card = prepRoot(name);
+  const h4 = card && card.querySelector('.pp-sec[data-sec="pages"] h4');
+  if (h4) {
+    const old = h4.querySelector(".tag");
+    if (old) old.remove();
+    h4.insertAdjacentHTML("beforeend",
+      ` <span class="tag ok">${ICON("check")}記録済み：${esc(bc["ページ"] || "")}</span>`);
+  }
+}
+
+// --- 判断の保存と、完了したときの退場 -----------------------------------------
+
+/** 設定JSONを読んで mut(設定, boundary_check) を当てて保存する。戻り値＝boundary_check（失敗なら null）。 */
+async function prepDecide(name, mut) {
   try {
     const conf = await api(`/api/doc/${encodeURIComponent(name)}/conf`);
     const st = conf["設定"];
-    let note;
-    if (side === "footer" && d.footer && d.footer["提案"] != null) {
-      st.footer_margin = d.footer["提案"];
-      note = `フッター余白 ${d.footer["現在"]}→${d.footer["提案"]}`;
-      BD_CHANGED.add(name);
-    } else if (side === "header" && d.header && d.header["提案"] != null) {
-      st.header_y = d.header["提案"];
-      note = `ヘッダー上端 ${d.header["現在"]}→${d.header["提案"]}`;
-      BD_CHANGED.add(name);
-    } else if (side === null) {
-      note = "問題なし";
-    } else {
-      toast("適用できる提案がありません", "err");
-      return null;
-    }
-    const prev = (st.boundary_check || {})["判断"];
-    st.boundary_check = { "日": new Date().toISOString().slice(0, 10),
-                          "判断": prev && prev !== note ? `${prev}・${note}` : note };
+    const bc = (st.boundary_check && typeof st.boundary_check === "object") ? st.boundary_check : {};
+    const wasDone = prepComplete(bc);          // この記録で「完了」に変わったかを後で見る
+    mut(st, bc);
+    bc["日"] = new Date().toISOString().slice(0, 10);
+    st.boundary_check = bc;
     await api(`/api/doc/${encodeURIComponent(name)}/settings`, { settings: st });
-    const row = DOCS.find((x) => x.name === name);
-    if (row) row["点検"] = true;
+    if (PREP.full[name]) PREP.full[name]["判断"] = bc;
+    const row = (PREP.sum || []).find((x) => x.name === name);
+    if (row) { row["判断"] = bc; row["完了"] = prepComplete(bc); }
+    const drow = DOCS.find((x) => x.name === name);
+    if (drow) drow["点検"] = prepComplete(bc);
     updateBdUI();
-    return note;
+    prepUpdateRebuild();
+    prepAfterDecide(name, bc, wasDone);
+    return bc;
   } catch (e) {
     toast(`${name}: ${e.message || e}`, "err");
     return null;
   }
 }
 
-async function bdRebuild() {
-  if (!BD_CHANGED.size) {
-    toast("余白を変えた冊はありません（作り直しは不要です）", "ok");
-    return;
+function prepAfterDecide(name, bc, wasDone) {
+  const card = prepCardEl(name);               // 一覧のカード（隠れていても更新しておく）
+  if (card) {
+    const decs = card.querySelector(".pp-decs");
+    if (decs) decs.innerHTML = prepDecChips(bc);
   }
-  const names = [...BD_CHANGED];
+  if (PREP.cur === name) ppwChipsUpdate(name);
+  prepProgress();
+  // この記録で3つ揃った冊は、少し見せてから一覧へ戻る（一覧では並び直って次の冊が先頭）
+  if (!wasDone && prepComplete(bc)) {
+    const todoLeft = (PREP.sum || []).filter((d) => !d["完了"]).length;
+    toast(todoLeft
+      ? `${name} をチェック済みへ移しました（残り ${todoLeft}冊）`
+      : `${name} で最後です。全冊チェック済みになりました`, "ok");
+    if (PREP.cur === name) {
+      setTimeout(() => { if (PREP.cur === name) closePrepWork(); }, 900);
+    }
+  }
+}
+
+// --- 解析の作り直し（手動。何をするかを先に見せる） ----------------------------
+
+function prepUpdateRebuild() {
+  const n = PREP.changed.size;
+  $("prepRebuildLabel").textContent = n ? `解析を作り直す（${n}冊）` : "解析を作り直す";
+  $("prepRebuild").disabled = !n;
+  $("prepRebuild").classList.toggle("attn", n > 0);
+}
+
+$("prepRebuild").onclick = () => {
+  if (!PREP.changed.size) return;
+  const names = [...PREP.changed].sort();
+  modal("解析を作り直す", el(`<div style="max-width:560px">
+    <p class="note">余白・除外ページを変えた <b>${names.length}冊</b>を、新しい設定で解析し直します：</p>
+    <p class="kwchips">${names.map((n) => `<code>${esc(n)}</code>`).join(" ")}</p>
+    <p class="note">やることは3つです：<br>
+      ① 全ページから行を集め直す（変えた境界で切り直す）<br>
+      ② 文の組み立てと、検索語のヒットを集め直す<br>
+      ③ 解析キャッシュを新しい結果で書き換える</p>
+    <p class="note">1冊 数十秒・同時4冊で進みます。ヒット数や単位数が変わることがあり、
+      変わったぶんは確認モードのキューに未確認として出ます。</p></div>`), [
+    { label: `作り直す（${names.length}冊）`, kind: "primary", run: prepRebuild },
+    { label: "やめておく", kind: "ghost" },
+  ]);
+};
+
+async function prepRebuild() {
+  const names = [...PREP.changed];
+  if (!names.length) return;
   try {
-    await runJob({ kind: "warm", docs: names }, `${names.length}冊を新しい設定で解析し直しています…`);
-    BD_CHANGED.clear();
+    await runJob({ kind: "warm", docs: names },
+      `${names.length}冊を新しい設定で解析し直しています…`);
+    PREP.changed.clear();
+    for (const n of names) delete PREP.full[n];   // 診断も古くなった（次に開くとき取り直す）
+    prepUpdateRebuild();
     toast(`${names.length}冊の解析を作り直しました`, "ok");
     loadDocs();
+    if (!$("prep").hidden) await prepLoad();      // 診断を新しい設定で取り直して一覧を更新
   } catch (e) { toast(String(e.message || e), "err"); }
 }
+
+$("prepHelp").onclick = () => modal("切り取りと除外 — この画面でできること", el(`<div style="max-width:560px">
+  <p class="note">1冊につき判断は2回：<b>① 境界（ヘッダー・フッター）</b>と<b>② 除外ページ</b>。
+    どちらも記録すると自動でチェック済みタブへ移ります。</p>
+  <p class="note"><b>① 境界</b> — 右の原本に、どのページにも<b>上下2本の青い線</b>が出ています。
+    どのページの線をドラッグしても冊全体に効きます（数値入力・提案ボタンでも）。
+    <b class="pp-bad">赤</b>＝この値で切られる本文、<b class="pp-ok">緑</b>＝残る本文、
+    橙＝戻ってくるページ番号が即座に変わります。左の「巻き込みページ」から現場に飛べます。
+    ちょうどよい位置で「境界を記録する」（上下まとめて1回）。</p>
+  <p class="note"><b>② 除外ページ</b> — 原本を見ながら決めます。除外中のページは<b>暗い覆い</b>つきで
+    表示され、覆いをクリックで解除、理由（表紙／目次）は覆いの上で切り替え。
+    除外していないページは、ページ見出しの「除外する」で追加できます。決めるのは表紙・目次だけです。</p>
+  <p class="note">表示の大きさはビューア上部の<b>拡大率</b>か Ctrl+ホイールで変えられます（次の冊にも引き継がれます）。
+    判断は設定JSONの <code>boundary_check</code>（除外は <code>skip_pages</code>・<code>task_states</code>）に
+    日付つきで残り、卒論の付録の材料になります。余白や除外を変えたら、最後に右上の
+    <b>「解析を作り直す」</b>を押してください（押し忘れても、次にヒットを集めるとき自動で作り直されます）。</p></div>`), [
+  { label: "閉じる", kind: "ghost" },
+]);
 $("auditBack").onclick = () => closeAudit();
 $("auditOnlyTodo").onchange = () => renderAuditList();
 $("auditPreview").onclick = () => showUnitTable(AU.docs.length ? AU.docs : null);

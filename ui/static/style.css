@@ -654,16 +654,108 @@ button.aub.danger:hover{background:var(--red);color:var(--on-red)}
 .xtable thead th{position:sticky;top:0;background:var(--panel);z-index:1;font-weight:700}
 .xtable tr.off td{color:var(--label2);text-decoration:line-through;background:rgba(255,59,48,.05)}
 
-/* ---------- 切り取りの点検（2026-08-26） ---------- */
+/* ---------- 切り取りと除外（2026-08-27 に専用画面へ。旧「切り取りの点検」モーダル） ---------- */
 #bdBtn.attn{border-color:var(--amber);color:var(--amber)}
-.bdlist{max-width:720px;max-height:62vh;overflow-y:auto;padding-right:4px}
-.bd-doc{border:1px solid var(--sep);border-radius:var(--r-card);padding:9px 11px;margin:8px 0;background:var(--card)}
-.bd-doc.done{opacity:.62}
-.bd-head{margin-bottom:4px}
-.bd-side{font-size:12.5px;line-height:1.6;margin:3px 0;color:var(--label)}
-.bd-side.clean{color:var(--label2)}
-.bd-kw{color:var(--red)}
-.bd-clash{color:var(--amber)}
-.bd-prop{color:var(--accent)}
-.bd-ex{font-size:11.5px;color:var(--label2);padding:2px 0 2px 12px;border-left:2px solid var(--sep)}
-.bd-acts{display:flex;gap:8px;margin-top:7px}
+#prepRebuild.attn:not(:disabled){background:var(--amber);border-color:var(--amber);color:var(--on-amber)}
+
+#prep{flex:1;min-height:0;display:flex;flex-direction:column;animation:fade .2s ease-out;background:var(--bg)}
+.prep-count{font-size:15px;font-weight:700;white-space:nowrap}
+.prep-bar{flex:0 1 260px}
+#prepBarFill{height:100%;width:0;background:var(--green);border-radius:999px;transition:width .35s ease-out}
+.prep-tabs{display:flex;align-items:center;gap:14px;padding:10px 16px 2px;flex-wrap:wrap}
+.prep-seg button{padding:5px 14px;font-size:13px}
+.prep-seg .cnt{display:inline-block;min-width:18px;padding:0 5px;margin-left:4px;border-radius:999px;background:var(--accent-soft);color:inherit;font-size:11px;font-weight:700;line-height:17px;text-align:center}
+.prep-seg button.on .cnt{background:rgba(255,255,255,.25)}
+#prepList{flex:1;min-height:0;overflow-y:auto;padding:10px 16px 60px;max-width:1060px;width:100%;margin:0 auto}
+#prepList>.note.empty{padding:40px 0;text-align:center}
+
+/* ⚠️ overflow:hidden は退場アニメーション中だけ。常時付けると、開いたカードの
+   判断パネル（position:sticky）が画面に追従しなくなる */
+.prep-card{border:1px solid var(--sep);border-radius:var(--r-card);background:var(--panel);margin:0 0 10px;transition:opacity .4s ease-out,transform .4s ease-out,max-height .4s ease-out,margin .4s ease-out;animation:slide-up .2s ease-out}
+.prep-card.leaving{opacity:0;transform:translateX(40px);margin:0;border-width:0;overflow:hidden}
+.prep-head{display:flex;align-items:center;gap:10px;width:100%;text-align:left;background:transparent;border:0;border-radius:var(--r-card) var(--r-card) 0 0;padding:11px 14px;font:inherit;color:var(--label);cursor:pointer}
+.prep-head:hover{background:var(--accent-soft)}
+.pp-chev .ic{transition:transform .2s ease-out;margin:0}
+.prep-card.open .pp-chev .ic{transform:rotate(90deg)}
+.pp-name{font-size:14px}
+.pp-tags,.pp-decs{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+#prep .tag{font-size:11px;border:1px solid var(--sep);color:var(--label2);border-radius:999px;padding:0 8px;line-height:18px;white-space:nowrap;display:inline-flex;align-items:center;gap:3px}
+#prep .tag.ok{color:var(--green);border-color:var(--green)}
+#prep .tag.warn{color:var(--amber);border-color:var(--amber)}
+#prep .tag.kwtag{color:var(--red);border-color:var(--red);font-weight:700}
+#prep .tag.dim{color:var(--label3)}
+#prep .tag .ic{font-size:1em;margin:0}
+.pp-chip{font-size:11px;border:1px solid var(--sep);color:var(--label3);border-radius:999px;padding:0 8px;line-height:18px;display:inline-flex;align-items:center;gap:2px}
+.pp-chip.on{color:var(--green);border-color:var(--green)}
+.pp-chip .ic{font-size:1em;margin:0}
+
+.prep-body{border-top:1px solid var(--sep2);padding:10px 14px 14px;animation:fade .2s ease-out}
+.pp-step{width:18px;height:18px;border-radius:50%;background:var(--accent);color:var(--on-accent);font-size:11px;font-weight:700;display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto}
+.pp-sum{margin:0 0 6px;font-size:12.5px;color:var(--label2)}
+.pp-kw{color:var(--red);font-size:11px;font-weight:700}
+.pp-clash{width:100%;font-size:12px;color:var(--amber)}
+.pp-live b{font-weight:700}
+.pp-bad{color:var(--red)}
+.pp-ok{color:var(--green)}
+.pp-acts{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:8px}
+
+/* 1冊の作業ビュー：左＝判断パネル／右＝原本ビューア（画面いっぱいを使う） */
+#prepHome{flex:1;min-height:0;display:flex;flex-direction:column}
+#prepWork{flex:1;min-height:0;display:flex;flex-direction:column;animation:fade .2s ease-out}
+.ppw-top{display:flex;align-items:center;gap:12px;padding:7px 14px;border-bottom:1px solid var(--sep2);background:var(--panel);flex-wrap:wrap}
+.ppw-top b{font-size:14px}
+#ppwMain{flex:1;min-height:0;display:grid;grid-template-columns:320px minmax(0,1fr)}
+#ppwMain>.note.empty{grid-column:1 / -1;padding:48px;text-align:center}
+/* 幅が足りないときは縦に積む（パネル上・原本下。それぞれ独立スクロール） */
+@media (max-width:900px){
+  #ppwMain{grid-template-columns:1fr;grid-template-rows:minmax(0,42%) minmax(0,1fr)}
+  .pp-panel{border-right:0 !important;border-bottom:1px solid var(--sep2)}
+}
+.pp-panel{min-width:0;min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:10px;padding:12px;border-right:1px solid var(--sep2);background:var(--side)}
+.pp-sec{border:1px solid var(--sep2);border-radius:var(--r-ctl);background:var(--card);padding:10px 12px;flex:0 0 auto}
+.pp-sec h4{margin:0 0 4px;font-size:13px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.pp-brow{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:7px 0;font-size:12.5px}
+.pp-brow input[type=number]{width:64px}
+.pp-brow .pp-live{width:100%;margin-left:2px}
+.pp-jump{display:flex;flex-wrap:wrap;gap:4px;align-items:center;margin:6px 0}
+.pp-jchip.kw{color:var(--red);border-color:var(--red);font-weight:700}
+.pp-skipstat{margin:4px 0;display:flex;flex-wrap:wrap;gap:4px;align-items:center}
+.pp-others{display:flex;flex-wrap:wrap;gap:4px;align-items:center}
+
+.pp-viewer{display:flex;flex-direction:column;min-width:0;min-height:0;background:var(--field)}
+.pp-vtools{display:flex;align-items:center;gap:8px;padding:6px 10px;border-bottom:1px solid var(--sep2);background:var(--card);flex-wrap:wrap}
+.pp-zoom{width:130px}
+/* ⚠️ flexの中央寄せだと、拡大してページが容器より広くなったとき左端がスクロールで
+   届かなくなる。block＋左右autoマージンなら、余裕があれば中央・はみ出せば右だけに伸びる */
+.pp-scroll{position:relative;flex:1;min-height:0;overflow:auto;padding:12px;--pz:1}
+.pp-vpage{margin:0 auto 16px;width:calc(840px * var(--pz));max-width:none}
+.pp-vpage figcaption{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--label2);margin:0 0 3px;position:sticky;left:0}
+.pp-vpage .pp-exbtn{visibility:hidden}
+.pp-vpage:hover .pp-exbtn{visibility:visible}
+.pp-vpage.flash .pp-canvas{animation:ppflash 1s ease-out}
+@keyframes ppflash{0%{box-shadow:0 0 0 5px var(--accent)}100%{box-shadow:none}}
+.pp-cand{font-size:10px;color:var(--amber);border:1px dashed var(--amber);border-radius:999px;padding:0 6px;line-height:16px}
+
+.pp-canvas{position:relative;border:1px solid var(--sep);border-radius:6px;overflow:hidden;background:#fff}
+.pp-canvas img{display:block;width:100%;height:100%;object-fit:contain}
+.pp-rect{position:absolute;border:2px solid transparent;border-radius:2px;transition:border-color .15s,background .15s}
+.pp-rect.cut{border-color:var(--red);background:rgba(242,87,90,.22)}
+.pp-rect.save{border-color:var(--green);background:rgba(52,199,122,.20)}
+.pp-rect.back{border-color:var(--amber);background:rgba(240,168,58,.22)}
+.pp-rect.gone{border-color:rgba(154,154,163,.5);border-style:dashed;background:transparent}
+.pp-vline{position:absolute;left:0;right:0;height:0;border-top:2px solid var(--accent);cursor:ns-resize;touch-action:none;z-index:3}
+.pp-vline::before{content:"";position:absolute;left:0;right:0;top:-8px;height:16px}   /* 掴みやすくする当たり判定 */
+.pp-vline.drag{border-top-color:var(--amber)}
+.pp-line-tag{position:absolute;right:6px;top:-22px;font-size:11px;background:var(--accent);color:var(--on-accent);border-radius:5px;padding:1px 7px;white-space:nowrap;user-select:none}
+.pp-vline[data-side="header"] .pp-line-tag{top:4px}   /* 上の線のラベルはページ内に */
+.pp-vline.drag .pp-line-tag{background:var(--amber);color:var(--on-amber)}
+
+/* 除外中のページの覆い */
+.pp-exd{position:absolute;inset:0;background:rgba(20,20,24,.62);z-index:4;display:flex;align-items:flex-start;justify-content:center;cursor:pointer}
+.pp-exd.ro{cursor:default;background:rgba(20,20,24,.45)}
+.pp-exd-tag{margin-top:16px;background:var(--red);color:var(--on-red);border-radius:999px;padding:3px 12px;font-size:12px;display:flex;gap:6px;align-items:center;box-shadow:var(--shadow-sm)}
+.pp-exd.ro .pp-exd-tag{background:var(--gray);color:#fff}
+.pp-exd .rz{font-size:11px;border:1px solid rgba(255,255,255,.6);background:transparent;color:#fff;border-radius:999px;padding:0 8px;line-height:17px}
+.pp-exd .rz.on{background:#fff;border-color:#fff;color:var(--red);font-weight:700}
+
+.minispin{display:inline-block;width:11px;height:11px;border-radius:50%;border:2px solid var(--accent);border-right-color:transparent;animation:spin .7s linear infinite;vertical-align:-1px;margin-right:5px}

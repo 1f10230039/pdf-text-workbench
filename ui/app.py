@@ -289,12 +289,12 @@ def api_docs():
         row = {"name": p.stem,
                "mb": round(p.stat().st_size / 1024 / 1024, 1),
                "設定済み": conf_path(p.stem).exists()}
-        # 切り取り（ヘッダー・フッター）の点検を済ませたか。確認モードへ入る前の誘導に使う
+        # 切り取りと除外の点検を済ませたか。確認モードへ入る前の誘導に使う
         row["点検"] = False
         if row["設定済み"]:
             try:
                 cj = json.loads(conf_path(p.stem).read_text(encoding="utf-8"))
-                row["点検"] = bool(cj.get("boundary_check"))
+                row["点検"] = bc_complete(cj.get("boundary_check"))
             except Exception:
                 pass
         # 抽出単位の数（前回解析時のメタ。→ cachekit.write_meta）。
@@ -1069,28 +1069,127 @@ def _units_payload(name: str, kws) -> dict:
             "確認数": sum(1 for u in units if u.get("確認"))}
 
 
-# 点検結果のキャッシュ。診断は全ページ走査（1冊 数秒）なので、設定が同じなら使い回す
+# --- 切り取りと除外（旧「切り取りの点検」。2026-08-27 に専用画面へ） -----------
+#
+# 診断（boundary_scan）は全ページ走査で1冊数秒かかるので、3段で持つ：
+#   メモリ → ディスク（.cache/{名前}.boundary.json）→ 再計算
+# ディスクに残すのは、画面を開き直す・サーバーを立ち上げ直すたびに
+# 61冊×数秒を待たされないため。署名（PDFのmtime＋境界の設定＋検索語）が合えば有効。
 _boundary_cache: dict[tuple, dict] = {}
 
+# 点検完了の条件：フッター・ヘッダー・ページの3つとも判断が記録されていること。
+# 2026-08-26 以前の旧形式（"判断" 1本）も完了と数える（例：D社の2冊）
+BC_KEYS = ("フッター", "ヘッダー", "ページ")
 
-def _boundary_payload(name: str, kws) -> dict:
-    """「切り取りの点検」1文書ぶん：ヘッダー／フッターの診断＋済んでいれば判断の記録。"""
-    st = load_settings(name)
+
+def bc_complete(bc) -> bool:
+    if not bc or not isinstance(bc, dict):
+        return False
+    return "判断" in bc or all(k in bc for k in BC_KEYS)
+
+
+def _boundary_sig(name: str, st: core.Settings, kws) -> str:
     mtime = (PDF_DIR / f"{name}.pdf").stat().st_mtime
-    key = (name, mtime, st.header_y, st.footer_margin,
-           json.dumps(st.skip_pages, ensure_ascii=False, sort_keys=True, default=str),
-           tuple(kws or []))
-    hit = _boundary_cache.get(key)
+    return json.dumps({
+        # v は診断結果の**形**を変えたら上げる（古いディスクキャッシュを黙って使わないため）。
+        # v2: 寸法を全ページ分に（ビューアが全ページを描く。2026-08-27 夕方）
+        "v": 2,
+        "mtime": mtime, "header_y": st.header_y, "footer_margin": st.footer_margin,
+        "skip": sorted([int(r["page"]), r.get("reason") or ""]
+                       for r in st.skip_pages or []),
+        "kws": list(kws or []),
+    }, ensure_ascii=False, sort_keys=True)
+
+
+def _boundary_read_disk(name: str, sig: str) -> dict | None:
+    p = CACHE_DIR / f"{name}.boundary.json"
+    if not p.exists():
+        return None
+    try:
+        d = json.loads(p.read_text(encoding="utf-8"))
+        if d.get("sig") == sig:
+            return d["scan"]
+    except Exception:
+        pass
+    return None
+
+
+def _boundary_scan_cached(name: str, st: core.Settings, kws) -> dict:
+    sig = _boundary_sig(name, st, kws)
+    hit = _boundary_cache.get((name, sig))
+    if hit is None:
+        hit = _boundary_read_disk(name, sig)
     if hit is None:
         with _pdf_lock:
             hit = core.boundary_scan(get_doc(name), st, kws)
-        if len(_boundary_cache) > 300:
-            _boundary_cache.clear()
-        _boundary_cache[key] = hit
-    out = dict(hit)
+        try:
+            CACHE_DIR.mkdir(parents=True, exist_ok=True)
+            (CACHE_DIR / f"{name}.boundary.json").write_text(
+                json.dumps({"sig": sig, "scan": hit}, ensure_ascii=False),
+                encoding="utf-8")
+        except Exception:
+            pass
+    if len(_boundary_cache) > 300:
+        _boundary_cache.clear()
+    _boundary_cache[(name, sig)] = hit
+    return hit
+
+
+def _boundary_payload(name: str, kws) -> dict:
+    """「切り取りと除外」1文書ぶん：診断の全行＋除外ページの候補＋判断の記録。"""
+    st = load_settings(name)
+    out = dict(_boundary_scan_cached(name, st, kws))
     out["name"] = name
     out["判断"] = st.boundary_check or None
+    # 除外ページ（③）：候補は cachekit の全候補キャッシュから（追加の走査なし）。
+    # 表紙・目次に絞るのは本人の方針（2026-08-27。小扉・対照表は必要になったら）
+    try:
+        cands = cachekit.load_cands(name, lambda: get_doc(name))["cands"]
+    except Exception:
+        cands = []
+    out["除外候補"] = [c for c in cands if c["reason"] in ("表紙", "目次")]
+    out["除外済み"] = st.skip_pages or []
+    out["設定"] = {"header_y": st.header_y, "footer_margin": st.footer_margin}
     return out
+
+
+def _boundary_summary(name: str, kws) -> dict:
+    """一覧1行ぶん（軽量）。診断がキャッシュにあれば件数だけ添える。無ければ走査しない。"""
+    st = load_settings(name)
+    row = {"name": name, "判断": st.boundary_check or None,
+           "完了": bc_complete(st.boundary_check)}
+    sig = _boundary_sig(name, st, kws)
+    scan = _boundary_cache.get((name, sig)) or _boundary_read_disk(name, sig)
+    if scan is not None:
+        _boundary_cache[(name, sig)] = scan
+        for side in ("footer", "header"):
+            s = scan.get(side) or {}
+            row[side] = {k: s.get(k) for k in
+                         ("現在", "件数", "検索語入り", "提案", "干渉")}
+        row["診断済み"] = True
+    else:
+        row["診断済み"] = False
+    return row
+
+
+@app.get("/api/prep")
+def api_prep():
+    """「切り取りと除外」の一覧。ディスクキャッシュだけ見るので一瞬で返る。
+
+    診断がまだの冊は「診断済み: false」で返す。画面はそれを見て
+    ジョブ（kind=boundary）を1回走らせ、もう一度ここを呼ぶ。
+    """
+    kws = load_keywords()
+    rows = [_boundary_summary(p.stem, kws) for p in sorted(PDF_DIR.glob("*.pdf"))]
+    return jsonify({"docs": rows, "検索語": kws})
+
+
+@app.get("/api/boundary/<name>")
+def api_boundary(name):
+    """1冊ぶんの診断（アコーディオンを開いたときに呼ぶ）。キャッシュ済みなら一瞬。"""
+    if not (PDF_DIR / f"{name}.pdf").exists():
+        return jsonify({"error": "無い文書です"}), 404
+    return jsonify(_boundary_payload(name, load_keywords()))
 
 
 def _table_rows(names: list[str], kws, upd, errors: dict | None = None) -> list[dict]:
@@ -1162,7 +1261,7 @@ def _run_job(kind: str, params: dict):
         kws = params.get("keywords")
 
         # どのジョブも、まずキャッシュを揃える（未解析があるときだけ時間がかかる）。
-        # ⚠️ 切り取りの点検（boundary）だけは行キャッシュを使わないので温めない（軽く走らせる）
+        # ⚠️ 切り取りと除外（boundary）だけは行キャッシュを使わないので温めない（軽く走らせる）
         errors = {} if kind == "boundary" else _warm_names(names, upd)
         result: dict = {}
 
@@ -1172,7 +1271,8 @@ def _run_job(kind: str, params: dict):
             upd(add_total=len(names))
             docs = []
             for i, n in enumerate(names, 1):
-                upd(step="切り取りの点検", detail=f"{i}/{len(names)}冊：{n}", add_done=1)
+                upd(step="ヘッダー・フッターに巻き込まれた行を全ページから探しています",
+                    detail=f"{i}/{len(names)}冊：{n}", add_done=1)
                 try:
                     docs.append(_boundary_payload(n, kws or load_keywords()))
                 except Exception as e:

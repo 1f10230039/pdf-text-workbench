@@ -108,7 +108,7 @@
     <div class="open-head">
       <h2>PDFを選ぶ</h2>
       <input id="docFilter" class="search" placeholder="企業名や年度で絞り込む…">
-      <button id="bdBtn" title="ヘッダー・フッターの切り取り線が本文を巻き込んでいないか、全冊を機械診断します。確認モードの前に必ず1回"><svg class="ic"><use href="#i-eye"/></svg><span id="bdBtnLabel">切り取りの点検</span></button>
+      <button id="bdBtn" title="ヘッダー・フッターの境界と、除外ページ（表紙・目次）を原本を見ながら1冊ずつ決めます。確認モードの前に全冊"><svg class="ic"><use href="#i-scissors"/></svg><span id="bdBtnLabel">切り取りと除外</span></button>
       <button id="auditBtn" class="primary" title="選んだ文書（未選択なら全部）の生成AI関連語のヒット箇所を、1件ずつ順に確認します"><svg class="ic"><use href="#i-gather"/></svg><span id="auditBtnLabel">ヒットを確認（全冊）</span></button>
     </div>
     <div class="open-selbar">
@@ -124,7 +124,7 @@
     <div class="card steps">
       <h3><svg class="ic"><use href="#i-sparkle"/></svg>いまの流れ（抽出単位方式）</h3>
       <ol>
-        <li>まず<b>切り取りの点検</b> — ヘッダー・フッターの切り取り線が本文を巻き込んでいないかを全冊診断し、文書ごとに余白を直します（⚠️ フッターに巻き込まれて文が途中で切れていた実例あり）</li>
+        <li>まず<b>切り取りと除外</b> — ヘッダー・フッターの境界が本文を巻き込んでいないかを原本で確かめ、除外ページ（表紙・目次）と一緒に1冊ずつ決めます（フッターに巻き込まれて文が途中で切れていた実例あり）</li>
         <li>文書を選んで<b>ヒットを確認</b>（確認モード）— 生成AI関連語のヒット箇所を1件ずつ ✓ で確認します。原本では検索語そのものが光ります</li>
         <li>直したい箇所はカードの上でそのまま直せます — 文を<b>足す・繋ぐ・除外</b>（理由つき。全部JSONに残ります）。表の範囲やページ除外だけ「開いて直す」</li>
         <li>確認が済んだら<b>全冊書き出し</b> → <code>KHCoder_抽出単位.xlsx</code>（年・企業・群で分割もできます）</li>
@@ -170,6 +170,42 @@
       <div id="auditList"></div>
     </div>
     <div id="auditRight"><div id="auditPageBox"></div></div>
+  </div>
+</section>
+
+<!-- ===== 切り取りと除外（旧「切り取りの点検」。2026-08-27 に専用画面へ） =====
+     ヘッダー／フッターの境界と、除外ページ（表紙・目次）を、原本を見ながら1冊ずつ決める。
+     未チェック／チェック済みの2タブ。3つの判断（フッター・ヘッダー・ページ）が揃うと
+     自動でチェック済みへ移る。判断は設定JSONの boundary_check に残る -->
+<section id="prep" hidden>
+  <div class="audit-top">
+    <button id="prepBack" class="ghost"><svg class="ic"><use href="#i-back"/></svg>一覧へ戻る</button>
+    <b><svg class="ic"><use href="#i-scissors"/></svg>切り取りと除外</b>
+    <span class="prep-count" id="prepCount" title="3つの判断（フッター・ヘッダー・除外ページ）が揃った冊の数"></span>
+    <div class="audit-bar prep-bar"><div id="prepBarFill"></div></div>
+    <span class="spacer"></span>
+    <button id="prepHelp" class="ghost mini" title="この画面でできること"><svg class="ic"><use href="#i-help"/></svg>使い方</button>
+    <button id="prepRebuild" class="primary mini" title="余白や除外ページを変えた冊の解析キャッシュを、新しい設定で作り直します"><svg class="ic"><use href="#i-gear"/></svg><span id="prepRebuildLabel">解析を作り直す</span></button>
+  </div>
+  <!-- 冊の一覧（2タブ） -->
+  <div id="prepHome">
+    <div class="prep-tabs">
+      <div class="seg prep-seg">
+        <button id="prepTabTodo" class="on">未チェック <span id="prepCntTodo" class="cnt"></span></button>
+        <button id="prepTabDone">チェック済み <span id="prepCntDone" class="cnt"></span></button>
+      </div>
+      <span id="prepOrder" class="hint"></span>
+    </div>
+    <div id="prepList"></div>
+  </div>
+  <!-- 1冊の作業ビュー：左＝判断パネル／右＝原本ビューア（画面いっぱい） -->
+  <div id="prepWork" hidden>
+    <div class="ppw-top">
+      <button id="ppwBack" class="ghost mini"><svg class="ic"><use href="#i-back"/></svg>冊の一覧</button>
+      <b id="ppwName"></b>
+      <span id="ppwChips" class="pp-decs"></span>
+    </div>
+    <div id="ppwMain"></div>
   </div>
 </section>
 
