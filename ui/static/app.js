@@ -34,7 +34,8 @@ const api = async (url, body) => {
 };
 
 // 設定を入れる欄。id は p_<キー名> で統一してある
-const PARAMS = ["header_y", "footer_margin", "size_tol", "tiny_ratio", "join_gap",
+// （header_y / footer_margin は 2026-08-31 に座標カットの廃止とともに撤去）
+const PARAMS = ["size_tol", "tiny_ratio", "join_gap",
                 "col_tol", "line_gap", "min_len", "body_size", "section_min_pt",
                 "repeat_ratio"];
 const BOOL_PARAMS = ["auto_join"];                        // チェックボックス
@@ -67,12 +68,32 @@ function updateSelUI() {
   $("selNone").disabled = !SEL.size;
 }
 
-let DOCS = [];                       // /api/docs の結果。点検ゲートとバッジが見る
+let DOCS = [];                       // /api/docs の結果。バッジが見る
+
+/** ホーム上部の進み具合と「次にやること」。何をすればいいかを一目で示す（2026-08-31 追加）。
+ *  done の数え方は確認モード（auDone）と同じ：✓確認済み または 除外済み。 */
+function renderHomeProg() {
+  const box = $("homeProg");
+  const known = DOCS.filter((d) => d["単位数"] != null);
+  if (!known.length) { box.hidden = true; return; }
+  const total = known.reduce((a, d) => a + d["単位数"], 0);
+  const ex = known.reduce((a, d) => a + (d["単位数"] - (d["採用数"] ?? d["単位数"])), 0);
+  const ck = known.reduce((a, d) => a + (d["確認数"] || 0), 0);
+  const done = Math.min(total, ck + ex);
+  const attention = DOCS.length - known.length + DOCS.filter((d) => d["古い"]).length;
+  box.hidden = false;
+  $("hpMain").innerHTML = `ヒット <b>${total}</b>単位 ─ 済み <b>${done}</b>（✓${ck}・除外${ex}）`;
+  $("hpFill").style.width = total ? `${done / total * 100}%` : "0%";
+  $("hpNext").textContent = attention
+    ? "未解析・要再解析の冊があります。「ヒットを確認」に入ると自動で解析されます"
+    : done < total ? `次にやること →「ヒットを確認」で残り ${total - done}単位`
+    : "全単位が済みです 🎉 確認モード右上の「全冊書き出し」→ KH Coder へ";
+}
 
 async function loadDocs() {
   const docs = await api("/api/docs");
   DOCS = docs;
-  updateBdUI();
+  renderHomeProg();
   for (const n of [...SEL]) if (!docs.some((d) => d.name === n)) SEL.delete(n);
   const ul = $("docList");
   ul.innerHTML = "";
@@ -85,12 +106,17 @@ async function loadDocs() {
   for (const d of docs) {
     const li = document.createElement("li");
     // 抽出単位のバッジ：**ヒットの無い文書は開かなくてよい**と一覧で分かるようにする。
+    // 進み具合（確認＋除外／全単位）まで行ごとに出す（2026-08-31）。
     // ⚠️ 列はグリッドで揃える（→ style.css .doclist li）。バッジを名前の後ろに流すと
     //    行ごとに位置がバラけて読めない、という指摘があった（2026-08-25）
     const n = d["単位数"];
+    const dEx = n == null ? 0 : n - (d["採用数"] ?? n);
+    const dDone = n == null ? 0 : Math.min(n, (d["確認数"] || 0) + dEx);
     const hits = n == null ? '<span class="tag dim">未解析</span>'
       : n === 0 ? '<span class="tag zero">ヒットなし</span>'
-      : `<span class="tag hit">${d["採用数"]}単位${d["確認数"] ? `・確認${d["確認数"]}` : ""}</span>`;
+      : dDone >= n
+        ? `<span class="tag hit done" title="全単位が確認・除外済みです${dEx ? `（除外${dEx}）` : ""}">${ICON("check")}${n}単位 済み</span>`
+        : `<span class="tag hit" title="✓確認 ${d["確認数"] || 0}・除外 ${dEx}">確認 ${dDone}/${n}</span>`;
     li.innerHTML =
       `<span class="selbox">${ICON("check")}</span>` +
       `<span class="dname">${ICON("doc")}<span>${d.name}</span>` +
@@ -160,7 +186,7 @@ $("upBtn").onclick = async () => {
 };
 
 async function openDoc(name) {
-  showLoading(`${name} を開いています…`, "全ページの文字サイズと、表紙・目次などの候補を調べています");
+  showLoading(`${name} を開いています…`, "全ページの文字サイズを調べています");
   try {
     await _openDoc(name);
   } finally {
@@ -200,7 +226,6 @@ async function _openDoc(name) {
     (S.info["しおり件数"] === 0 ? "（章構造は大見出しから推定）" : "");
   $("appTitle").hidden = true;
   fillParams();
-  fillReasonPicker();
   drawHist();
   $("pageList").innerHTML = "";
   document.documentElement.style.setProperty("--pagew", $("zoom").value + "px");
@@ -209,20 +234,8 @@ async function _openDoc(name) {
   setCurrent(1);
   S.boxes[1].classList.add("cur");
   syncSaveState();
-
-  // 設定JSONがまだ無い文書は、表紙・目次の候補が除外に入った状態で返ってくる（→ app.py）。
-  // 黙って入れると「なぜ除外されているのか」が分からないので、最初に1回だけ知らせる
-  const auto = (S.st.skip_pages || []).filter((r) => r.auto);
-  const cand = (S.info["候補"] || []).filter((c) => !skipSet().has(c.page));
-  if (auto.length || cand.length) {
-    toast((auto.length
-            ? `表紙と目次（p.${auto.map((r) => r.page).join(", ")}）を除外にしました。\n`
-            : "")
-        + (cand.length
-            ? `ほかに、外してもよさそうなページが ${cand.length}ページあります（章扉・編集方針・対照表・保証報告書）。`
-              + "\nこれらはまだ除外していません。左のサムネイルの「？」印か「記録」で原本を見て、外すか決めてください。"
-            : ""), "ok");
-  }
+  // ページ除外（表紙・目次の自動除外と手順チェックリスト）は 2026-08-31 に廃止。
+  // 分母は全ページ・全文で数える（→ core.extract_doc）
 }
 
 // ---------- 未保存の管理 ----------
@@ -440,7 +453,8 @@ function showManual() {
                 (st.tables || []).length + (st.table_off || []).length +
                 (st.unit_excludes || []).length + (st.unit_merges || []).length;
 
-  wrap.appendChild(taskPane());
+  // 手順チェックリスト（TASKS）と除外ページの一覧は 2026-08-31 に撤去（ページ除外の廃止）。
+  // 過去に記録した skip_pages・task_states は設定JSONに残っており、付録として読める
 
   wrap.appendChild(el(`<h3 class="manh">この文書で手を入れた箇所</h3>
     <p class="note">自動判定を手で直した箇所が<b>すべて</b>ここに出ます（合計 <b>${total}件</b>）。
@@ -531,282 +545,10 @@ function showManual() {
   body.appendChild(wrap);
   body.scrollTop = keep;
 
-  const todo = taskStatus().filter((r) => r.state === "未確認").length +
-               (S.st.skip_pages || []).filter((r) => !r.reason).length;
-  $("taskCount").textContent = todo ? `残り ${todo}` : "すべて確認済み";
+  $("taskCount").textContent = "";
   S.taskSig = taskSig();       // ⚠️ どの経路から描いても控える（描き忘れの判定に使う）
-
-  // 理由を選ぶときに「そのページが何なのか」が要る。読み込み済みなら即返る
-  if (!S.pages) loadPageList().then(() => { if (!$("taskPane").hidden) showManual(); });
 }
 $("manBadge").onclick = () => openTasks();
-
-// ---------- 手順（2026-08-12 追加） ----------
-// **新しいレポートを開いたら、必ず一通り目を通す項目。** 定義は core.TASKS（サーバー側が正）。
-//
-// なぜ要るか：`skip_pages` に番号を並べるだけでは「何をしたか」しか残らず、
-// **「やるべきことをやったか」が残らない。** 社間で同じ手順を踏んだと言えないと、
-// そもそも比較が成立しない。→ 各項目について、必ず「どう結論したか」を記録する。
-//
-// ⚠️ **状態は3つあり、「未確認」と「該当なし」を必ず区別する。**
-//    区別できないと「まだ見ていない」のか「見た上で無かった」のかが分からない。
-
-const TASK_CLS = { "除外した": "done", "該当なし": "na", "残した": "kept", "未確認": "todo" };
-
-// core.TASKS の note は Python 側でも読む文字列なので **強調** のまま書いてある。
-// ⚠️ そのまま入れるとアスタリスクが見えてしまうので、太字だけHTMLに直す
-const bold = (s) => esc(s).replace(/\*\*(.+?)\*\*/g, "<b>$1</b>");
-
-/** 手順ごとの状態。core.task_status() と同じ導き方をする（片方だけ変えないこと）。 */
-function taskStatus() {
-  const tasks = (S.info && S.info["手順"]) || [];
-  const notes = S.st.task_states || [];
-  return tasks.map((t) => {
-    const pages = (S.st.skip_pages || [])
-      .filter((r) => r.reason === t.key).map((r) => r.page).sort((a, b) => a - b);
-    const n = notes.find((x) => x.key === t.key) || {};
-    const state = pages.length ? "除外した" : (n.state || "未確認");
-    return { ...t, state, pages, memo: n.memo || "" };
-  });
-}
-
-function setTaskState(key, state, memo) {
-  const rest = (S.st.task_states || []).filter((x) => x.key !== key);
-  if (state) rest.push({ key, state, memo: memo || "" });
-  S.st.task_states = rest;
-}
-
-/** 手順1件ぶんの行。 */
-function taskRow(t) {
-  const row = document.createElement("div");
-  row.className = "taskrow " + TASK_CLS[t.state];
-  row.appendChild(el(`<span class="tstate">${t.state}</span>
-    <div class="tmain"><b>${esc(t.label)}</b>
-      <p class="note">${bold(t.note)}</p></div>`));
-
-  const act = document.createElement("div");
-  act.className = "tact";
-
-  if (t.state === "除外した") {
-    // どのページを外したのかは、番号を押してその場で確認できるようにする
-    const autoSet = new Set((S.st.skip_pages || []).filter((r) => r.auto).map((r) => r.page));
-    for (const p of t.pages) {
-      const b = document.createElement("button");
-      b.className = "pg";
-      b.textContent = `p.${p}` + (autoSet.has(p) ? "*" : "");
-      b.title = (headingOf(p) || "このページへ移動する") +
-                (autoSet.has(p) ? "\n＊自動候補をそのまま採用したページ" : "");
-      b.onclick = () => go(p);
-      act.appendChild(b);
-    }
-    const na = t.pages.filter((p) => autoSet.has(p)).length;
-    act.appendChild(el(`<span class="hint">${t.pages.length}ページ${na ? `（＊自動 ${na}）` : ""}</span>`));
-  } else if (t.state === "未確認") {
-    // ⚠️ 手順は「そのページを開いて、原本を見ながら」片付けるもの。導線もそう書く
-    act.appendChild(el(`<span class="hint">該当ページを開いて
-      <b>「このページを除外」→ 隣の理由で「${esc(t.label)}」</b>を選ぶ</span>`));
-    for (const s of (S.info["手順の状態"] || [])) {
-      const b = document.createElement("button");
-      b.className = "ghost mini";
-      b.textContent = s;
-      b.title = s === "該当なし"
-        ? "この文書には無かった（＝見た上で該当が無い）"
-        : "あるが、外さずに残すと判断した";
-      b.onclick = () => { setTaskState(t.key, s, ""); refresh(); };
-      act.appendChild(b);
-    }
-  } else {
-    // 該当なし／残した ＝ 人の判断。**なぜそうしたかを書けるようにする**（付録に載る）
-    const memo = document.createElement("input");
-    memo.className = "tmemo";
-    memo.placeholder = t.state === "残した"
-      ? "残した理由（例：参照した制度名が書かれているため）"
-      : "補足（任意）";
-    memo.value = t.memo;
-    memo.oninput = () => { setTaskState(t.key, t.state, memo.value); syncSaveState(); };
-    act.appendChild(memo);
-    const b = document.createElement("button");
-    b.className = "x back";
-    b.textContent = "戻す";
-    b.onclick = () => { setTaskState(t.key, null); refresh(); };
-    act.appendChild(b);
-  }
-  row.appendChild(act);
-  return row;
-}
-
-function taskPane() {
-  const rows = taskStatus();
-  const wrap = document.createElement("div");
-  const done = rows.filter((r) => r.state !== "未確認").length;
-
-  wrap.appendChild(el(`<h3 class="manh">手順
-      <span class="hint">${done} / ${rows.length} 確認済み</span></h3>
-    <p class="note">新しいレポートを開いたら、ここを上から片付けます。
-      <b>「外した」だけでなく「該当なし」「残した」も記録に残ります。</b><br>
-      ⚠️ <b>「未確認」と「該当なし」は違います。</b>前者は見ていない、後者は見た上で無かった。
-      この区別が無いと、手順を踏んだ証拠になりません。</p>`));
-
-  for (const label of ["外すのが既定", "見て判断する"]) {
-    const must = label === "外すのが既定";
-    const sec = document.createElement("section");
-    sec.className = "mansec";
-    sec.appendChild(el(`<h4>${label}</h4>`));
-    for (const t of rows.filter((r) => !!r.must === must)) sec.appendChild(taskRow(t));
-    wrap.appendChild(sec);
-  }
-
-  // 除外ページの自動候補（→ core.suggest_skips）。**未採用のものだけ**出す。
-  // 採用＝そのページを理由付きで除外に入れる（auto 印つき）。原本を見てから押す前提なので、
-  // 行のページ番号で飛べるようにしてある
-  wrap.appendChild(candidatePane());
-
-  // 理由の付いていない除外ページ。ここを空にすることが「手順を片付けた」の中身
-  const orphan = (S.st.skip_pages || []).filter((r) => !r.reason);
-  const sec = document.createElement("section");
-  sec.className = "mansec";
-  sec.appendChild(el(`<h4>理由が未設定の除外ページ<span class="hint">${orphan.length}件</span></h4>
-    <p class="note">番号だけでは、後から見て<b>章扉だったのか判断ミスだったのか分かりません</b>。
-      理由を選ぶと、上の手順に反映されます。<br>
-      <b>Shift+クリックで範囲選択。</b>巻末のデータ集のように十数ページ続くものは、
-      先頭を選んで末尾を Shift+クリック → まとめて理由を付けられます。</p>`));
-  if (!orphan.length) {
-    sec.appendChild(el('<p class="hint none">なし</p>'));
-    wrap.appendChild(sec);
-    return wrap;
-  }
-
-  const pages = orphan.map((r) => r.page);
-  // 理由が付いて一覧から消えたページは、選択からも外す
-  S.sel = new Set([...(S.sel || [])].filter((p) => pages.includes(p)));
-  const n = S.sel.size;
-
-  // まとめて付けるバー。スクロールしても見えるように上に貼り付けておく
-  // （12件も並ぶと、下まで送ったときに操作先が画面外へ消えるため）
-  const bar = document.createElement("div");
-  bar.className = "bulkbar";
-  const allOn = n === pages.length;
-  const all = document.createElement("button");
-  all.className = "ghost mini";
-  all.textContent = allOn ? "選択を解除" : `すべて選ぶ（${pages.length}）`;
-  all.onclick = () => { S.sel = allOn ? new Set() : new Set(pages); showManual(); };
-  bar.appendChild(all);
-  bar.appendChild(el(`<span class="hint">${n ? `${n}件を選択中` : "未選択"}</span>`));
-
-  if (n) {
-    const undo = document.createElement("button");
-    undo.className = "x back";
-    undo.textContent = "除外をやめる";
-    undo.onclick = () => {
-      const target = [...S.sel];
-      S.sel = new Set();            // ⚠️ 先に空にする。unskipPages の中で描き直されるため
-      unskipPages(target);
-    };
-    bar.appendChild(undo);
-  }
-
-  const bulk = document.createElement("select");
-  bulk.className = "treason";
-  bulk.disabled = !n;
-  bulk.appendChild(el(`<option value=''>${
-    n ? bulkLabel(n) : "ページを選ぶと理由を付けられます"}</option>`));
-  for (const t of (S.info["手順"] || [])) {
-    const o = document.createElement("option");
-    o.value = t.key; o.textContent = t.label;
-    bulk.appendChild(o);
-  }
-  bulk.onchange = () => {
-    if (!bulk.value) return;
-    const target = [...S.sel];
-    S.sel = new Set();           // ⚠️ 先に空にする（setSkipReasons の中で描き直されるため）
-    setSkipReasons(target, bulk.value);       // 再解析もここで1回だけ
-  };
-  bar.appendChild(bulk);
-  sec.appendChild(bar);
-
-  for (const r of orphan) {
-    const row = document.createElement("div");
-    row.className = "orow" + (r.page === S.page ? " cur" : "") +
-                    (S.sel.has(r.page) ? " on" : "");
-    const cb = document.createElement("input");
-    cb.type = "checkbox";
-    cb.checked = S.sel.has(r.page);
-    cb.title = "Shift+クリックで、前に選んだページからここまでをまとめて選ぶ";
-    cb.onclick = (e) => {
-      if (e.shiftKey && S.selLast != null) {
-        const a = pages.indexOf(S.selLast), b = pages.indexOf(r.page);
-        if (a >= 0 && b >= 0) {
-          for (const p of pages.slice(Math.min(a, b), Math.max(a, b) + 1)) S.sel.add(p);
-        }
-      } else if (cb.checked) S.sel.add(r.page);
-      else S.sel.delete(r.page);
-      S.selLast = r.page;
-      showManual();
-    };
-    row.appendChild(cb);
-
-    const p = document.createElement("button");
-    p.className = "pg";
-    p.textContent = `p.${r.page}`;
-    p.title = "このページへ移動する";
-    p.onclick = () => go(r.page);
-    row.appendChild(p);
-    const h = headingOf(r.page);
-    row.appendChild(el(`<span class="ut" title="${esc(h)}">${
-      h ? esc(h) : '<i class="hint">(見出しなし)</i>'}</span>`));
-    sec.appendChild(row);
-  }
-  wrap.appendChild(sec);
-  return wrap;
-}
-
-/** 除外ページの自動候補のうち、まだ採用していないもの。 */
-function candidatePane() {
-  const sec = document.createElement("section");
-  sec.className = "mansec";
-  const skip = skipSet();
-  const all = (S.info && S.info["候補"]) || [];
-  const todo = all.filter((c) => !skip.has(c.page));
-  const adopted = all.filter((c) => skip.has(c.page)).length;
-  sec.appendChild(el(`<h4>自動候補（未採用）<span class="hint">${todo.length}件${adopted ? `／採用済み ${adopted}` : ""}</span></h4>
-    <p class="note">ページの位置・文字数・大きな文字の文言だけから機械的に挙げた候補です。
-      <b>原本を見てから採用してください</b>（ページ番号で飛べます）。採用したものには「自動」の印が残ります。</p>`));
-  if (!todo.length) {
-    sec.appendChild(el('<p class="hint none">なし</p>'));
-    return sec;
-  }
-  const bar = document.createElement("div");
-  bar.className = "bulkbar";
-  const allBtn = document.createElement("button");
-  allBtn.className = "ghost mini";
-  allBtn.textContent = `全部採用（${todo.length}）`;
-  allBtn.title = "候補を全部、理由付きで除外に入れる。後から1件ずつ戻せます";
-  allBtn.onclick = () => adoptCandidates(todo);
-  bar.appendChild(allBtn);
-  bar.appendChild(el(`<span class="hint">${[...new Set(todo.map((c) => c.reason))].map(
-    (k) => `${k} ${todo.filter((c) => c.reason === k).length}`).join(" ／ ")}</span>`));
-  sec.appendChild(bar);
-  for (const c of todo) {
-    const row = document.createElement("div");
-    row.className = "orow candrow" + (c.page === S.page ? " cur" : "");
-    const p = document.createElement("button");
-    p.className = "pg";
-    p.textContent = `p.${c.page}`;
-    p.title = "このページへ移動する";
-    p.onclick = () => go(c.page);
-    row.appendChild(p);
-    row.appendChild(el(`<span class="rtag cand">${esc(c.reason)}</span>`));
-    row.appendChild(el(`<span class="why" title="${esc(c.why)}">${esc(c.why)}</span>`));
-    const b = document.createElement("button");
-    b.className = "ghost mini";
-    b.textContent = "採用";
-    b.style.marginLeft = "auto";
-    b.onclick = () => toggleSkip(c.page, true, c.reason, true);
-    row.appendChild(b);
-    sec.appendChild(row);
-  }
-  return sec;
-}
 
 /** 手で直した箇所（除外・結合・種別・並べ替え）をまとめて自動判定に戻す。
  *
@@ -862,7 +604,6 @@ function fillParams() {
   for (const k of BOOL_PARAMS) $("p_" + k).checked = !!S.st[k];
   for (const k of SEL_PARAMS) $("p_" + k).value = S.st[k] || "";
   $("order").value = S.st.order || "reading";
-  updateSkipUI();
 }
 
 function readParams() {
@@ -1008,14 +749,10 @@ function buildPages() {
     el.dataset.page = n;
     el.style.aspectRatio = `${p.w} / ${p.h}`;
     el.innerHTML = `<div class="pnum">p.${n}<small>${p.label}</small></div>` +
-                   `<div class="ov"></div><div class="pload"></div>` +
-                   `<div class="guide gh"><span>HEADER_Y</span></div>` +
-                   `<div class="guide gf"><span>FOOTER_MARGIN</span></div>`;
-    bindGuides(el);
+                   `<div class="ov"></div><div class="pload"></div>`;
     wrap.appendChild(el);
     S.boxes[n] = el;
   }
-  markSkipped();
   observe();
 }
 
@@ -1091,7 +828,6 @@ async function loadPage(n) {
   if (el.dataset.loaded !== "1") return;      // 待っている間にスクロールで外れた
   S.cache[n] = d;
   drawOverlay(n);
-  drawGuides(el);
   if (n === S.page) drawUnits(d);             // 今のページなら右パネルも更新
 }
 
@@ -1112,7 +848,6 @@ function refresh() {
   if (!S.name) return;
   syncSaveState();
   drawHist();
-  markSkipped();
   redrawTasks();
   markCtxStale();
   for (const n of Object.keys(S.boxes).map(Number)) {
@@ -1155,8 +890,6 @@ function setCurrent(n) {
   S.page = n;
   $("pageNo").value = n;
   $("pageLabel").textContent = `印刷上のページ番号: ${S.info["ページ"][n - 1].label}`;
-  $("skipThis").checked = skipSet().has(n);
-  syncReasonPicker();
   for (const el of Object.values(S.boxes)) el.classList.remove("cur");
   S.boxes[n].classList.add("cur");
   markPageList();
@@ -1291,13 +1024,6 @@ function hl(gid, on) {
   if (g) g.style.borderColor = on ? "var(--accent)" : "";
 }
 
-function markSkipped() {
-  const skip = skipSet();
-  for (const [n, el] of Object.entries(S.boxes || {}))
-    el.classList.toggle("skip", skip.has(Number(n)));
-  markThumbs();
-}
-
 // ---------- サムネイル一覧（2026-08-22 追加） ----------
 // 長い文書（最大400ページ超）で「今どのあたりか」を掴み、一発で飛ぶためのもの。
 // ページ画像と同じ endpoint を小さい zoom で呼ぶ（サーバー側のキャッシュは zoom 別）。
@@ -1350,17 +1076,11 @@ function buildThumbs() {
   collapseSidebar(!open);
 }
 
-/** 除外・候補・表あり・現在ページ の印を付け直す。 */
+/** 表あり・現在ページ・ヒット数 の印を付け直す（除外・候補の印は 2026-08-31 に撤去）。 */
 function markThumbs() {
-  const skip = skipSet();
-  const cand = {};
-  for (const c of ((S.info && S.info["候補"]) || [])) cand[c.page] = c.reason;
   const tbl = new Set((S.pages || []).filter((r) => r["表数"] > 0).map((r) => r["ページ"]));
   for (const t of $("thumbList").children) {
     const n = Number(t.dataset.page);
-    t.classList.toggle("skip", skip.has(n));
-    t.classList.toggle("cand", !!cand[n]);
-    if (cand[n]) t.dataset.cand = cand[n];
     t.classList.toggle("tbl", tbl.has(n));
     t.classList.toggle("cur", n === S.page);
     const h = S.ctx && S.ctx["ページ別"] ? S.ctx["ページ別"][n] : 0;
@@ -1388,17 +1108,8 @@ function drawUnits(d) {
   wrap.innerHTML = "";
   wrap.classList.add("fadein");
 
-  // ⚠️ 除外ページでも単位は普通に計算されて返ってくる（画面で中身を確認できるように）。
-  //    それを黙って並べると「除外したのに効いていない」ように見えるので、必ず断る。
-  const skipped = !!d["除外ページ"];
-  wrap.classList.toggle("skipped", skipped);
-  if (skipped) {
-    const b = document.createElement("div");
-    b.className = "skip-note";
-    b.innerHTML = "<b>このページは除外しています。</b>下の文は<b>書き出されません</b>。" +
-      "<br>戻すには、上のツールバーの「このページを除外」のチェックを外してください。";
-    wrap.appendChild(b);
-  }
+  // ページ除外は 2026-08-31 に廃止：全ページが書き出しの対象（分母は全ページ・全文）
+  wrap.classList.remove("skipped");
 
   let shown = 0;                    // 表示した（単位を持つ）ブロックの数。先頭判定に使う
   for (const g of d.groups) {
@@ -1561,23 +1272,24 @@ function drawUnits(d) {
     const e = document.createElement("p");
     e.className = "note empty";
     e.textContent = d.lines.length
-      ? "このページの行は、すべてヘッダー／フッターとして切られています。"
+      ? "このページの行は、すべて柱（反復行）として切られています。"
       : "このページからは文字が取れませんでした（画像だけのページかもしれません）。";
     wrap.appendChild(e);
   }
 
+  // 落ちた行＝柱（反復）だけ。座標カットは 2026-08-31 に廃止した
   const dropped = d.lines.filter((l) => l.dropped);
   if (dropped.length) {
     const div = document.createElement("div");
     div.className = "drop-list";
-    div.innerHTML = `<b>座標で捨てた行 ${dropped.length}件</b>（ヘッダー・フッター）` +
-      dropped.map((l) => `<div class="d">${l.dropped} ／ ${esc(l.text)}</div>`).join("");
+    div.innerHTML = `<b>柱として捨てた行 ${dropped.length}件</b>（全ページで反復する文言）` +
+      dropped.map((l) => `<div class="d">${esc(l.text)}</div>`).join("");
     wrap.appendChild(div);
   }
 
   // 種別は0件のものを並べても読みにくいだけなので、出たものだけ出す
   const bd = KINDS.filter((k) => kinds[k]).map((k) => `${k}${kinds[k]}`).join(" ");
-  $("unitStat").textContent = (skipped ? "（除外ページ）" : "") +
+  $("unitStat").textContent =
     `${n}文（${bd}）` +
     (ex ? ` ／ 除外${ex}` : "") +
     ` ／ 本文${d["本文pt"]}pt`;
@@ -2046,14 +1758,10 @@ function drawExcluded() {
             (S.st.kinds || []).length + (S.st.manual_order || []).length +
             (S.st.tables || []).length + (S.st.table_off || []).length +
             (S.st.unit_excludes || []).length + (S.st.unit_merges || []).length;
-  // ⚠️ 手順の未確認は件数より先に出す。**やり忘れは、やり過ぎより気づきにくい**
-  const todo = S.info ? taskStatus().filter((r) => r.state === "未確認").length : 0;
-  const cand = S.info ? (S.info["候補"] || []).filter((c) => !skipSet().has(c.page)).length : 0;
-  // サイドバーの「記録」タブに、まだ見ていないもの（手順＋候補）の数を出す
-  $("manCnt").textContent = (todo + cand) ? String(todo + cand) : "";
-  $("manBadge").title = "手順の進み具合と、手で直した箇所" +
-    (todo ? `\n手順 残り${todo}` : "") + (cand ? `\n外す候補 ${cand}` : "") + (n ? `\n手直し ${n}件` : "");
-  $("manBadge").classList.toggle("todo", todo > 0);
+  // 手順チェックリストは 2026-08-31 に撤去（ページ除外の廃止）。バッジは手直し件数だけ
+  $("manCnt").textContent = "";
+  $("manBadge").title = "手で直した箇所" + (n ? `\n手直し ${n}件` : "");
+  $("manBadge").classList.remove("todo");
   $("exWrap").hidden = !list.length;
   box.innerHTML = "";
   for (const r of list) {
@@ -2086,46 +1794,7 @@ const dupRules = (list, r) => list.some((x) =>
 
 const esc = (s) => s.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
 
-// ---------- ヘッダー／フッターの線をドラッグ ----------
-
-/** ヘッダー／フッターの線は全ページ共通の設定なので、全ページに描く。 */
-function drawGuides(el) {
-  const targets = el ? [el] : Object.values(S.boxes || {});
-  for (const b of targets) {
-    const h = S.info["ページ"][Number(b.dataset.page) - 1].h;
-    b.querySelector(".gh").style.top = pct(S.st.header_y ?? 0, h);
-    b.querySelector(".gf").style.top = pct(h - (S.st.footer_margin ?? 0), h);
-  }
-}
-
-/** どのページの線をつまんでも同じ設定が動く。 */
-function bindGuides(el) {
-  for (const [sel, key] of [[".gh", "header_y"], [".gf", "footer_margin"]]) {
-    el.querySelector(sel).addEventListener("mousedown", (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      const line = el.querySelector(sel);
-      line.classList.add("drag");
-      const rect = el.getBoundingClientRect();
-      const h = S.info["ページ"][Number(el.dataset.page) - 1].h;
-      const move = (ev) => {
-        const y = (ev.clientY - rect.top) / rect.height * h;
-        const v = key === "header_y" ? y : h - y;
-        S.st[key] = Math.max(0, Math.round(v * 10) / 10);
-        $("p_" + key).value = S.st[key];
-        drawGuides();
-      };
-      const up = () => {
-        line.classList.remove("drag");
-        document.removeEventListener("mousemove", move);
-        document.removeEventListener("mouseup", up);
-        refresh();                       // 離したときだけ再解析する
-      };
-      document.addEventListener("mousemove", move);
-      document.addEventListener("mouseup", up);
-    });
-  }
-}
+// 🔴 ヘッダー／フッターの境界線（ドラッグ）は 2026-08-31 に座標カットの廃止とともに撤去した。
 
 // ---------- ページ操作 ----------
 
@@ -2170,10 +1839,10 @@ document.addEventListener("click", (e) => {
 // 「？ 使い方」。常時出していた説明をダイアログに移した（単位リストの見える件数を増やすため）
 $("helpBtn").onclick = () => modal("この画面でできること", el(`<div class="helpbox">
   <h4>ページを見て回る</h4>
-  <p><b>一覧</b>（<kbd>T</kbd>）で左にサムネイル。除外したページは赤、外す候補は「？」、表のあるページは下線。
-    <kbd>←</kbd> <kbd>→</kbd> でもページを移動できます。</p>
-  <h4>ページの判断（ツールバー）</h4>
-  <p><b>このページを除外</b> にチェック → 隣で<b>理由</b>を選びます。理由は設定JSONに残り、卒論の付録になります。</p>
+  <p><b>一覧</b>（<kbd>T</kbd>）で左にサムネイル。表のあるページは下線。
+    <kbd>←</kbd> <kbd>→</kbd> でもページを移動できます。
+    （ページ除外とヘッダー・フッターの座標カットは 2026-08-31 に廃止しました。
+    捨てるのは柱＝反復行だけで、混ざったヒットは確認モードで理由を付けて外します）</p>
   <h4>ブロック（右の一覧）</h4>
   <p><b>⠿</b> を掴んで並べ替え（端に寄せると自動で送ります）／ プルダウンで<b>種別</b>を直す ／
     <b>×</b> でその文を除外 ／ <b>上と結合</b> で段をまたぐ本文を繋ぐ</p>
@@ -2194,7 +1863,7 @@ $("helpBtn").onclick = () => modal("この画面でできること", el(`<div cl
   <h4>キー</h4>
   <p><kbd>←</kbd> <kbd>→</kbd> ページ移動 ／ <kbd>T</kbd> サムネイル ／ <kbd>F</kbd> 文脈窓 ／ <kbd>Ctrl</kbd>+<kbd>S</kbd> 保存 ／ <kbd>Esc</kbd> 選択・パネルを閉じる</p>
   <h4>記録（ヘッダー）</h4>
-  <p>手順の進み具合・外す候補・手で直した箇所のすべて。そのまま設定JSONに残り、卒論の付録になります。</p>
+  <p>手で直した箇所のすべて。そのまま設定JSONに残り、卒論の付録になります。</p>
 </div>`), [{ label: "閉じる", kind: "ghost" }]);
 
 document.addEventListener("keydown", (e) => {
@@ -2209,99 +1878,6 @@ document.addEventListener("keydown", (e) => {
   if ((e.key === "f" || e.key === "F") && S.name && $("modal").hidden) showTab("ctx", true);
   if ((e.key === "u" || e.key === "U") && S.name && $("modal").hidden) showTab("units", true);
 });
-
-// ---------- 除外ページ ----------
-// ⚠️ 2026-08-12 に `skip_pages` を「番号のリスト」から `[{page, reason}]` に変えた。
-//    番号だけだと、後から見て p45 が章扉だったのか判断ミスだったのか分からない。
-//    理由は core.TASKS のキー。空欄のままでも動くが、手順一覧に「未設定」として出る。
-
-const skipSet = () => new Set((S.st.skip_pages || []).map((r) => r.page));
-const skipReason = (p) =>
-  ((S.st.skip_pages || []).find((r) => r.page === p) || {}).reason || "";
-
-/** 除外を変えた後の後始末。⚠️ refresh() は重いので、まとめて操作するときは最後に1回だけ。 */
-function afterSkipChange() {
-  (S.st.skip_pages || []).sort((a, b) => a.page - b.page);
-  syncReasonPicker();
-  updateSkipUI();
-  markPageList();
-  refresh();          // 右パネルの「除外ページです」の断りを、その場で出し入れするため
-}
-
-/** 除外の切り替え。理由は引き継ぐ（外す→戻す→また外す で消えると腹立たしいので）。
- *  `auto` は「機械の候補をそのまま採用した」印（→ core.suggest_skips）。人が理由を選び直したら消える。 */
-function toggleSkip(page, on, reason, auto) {
-  const cur = S.st.skip_pages || [];
-  const was = cur.find((r) => r.page === page);
-  const rest = cur.filter((r) => r.page !== page);
-  if (on) {
-    const r = { page, reason: reason !== undefined ? reason : ((was && was.reason) || "") };
-    if (auto || (reason === undefined && was && was.auto)) r.auto = true;
-    rest.push(r);
-  }
-  S.st.skip_pages = rest;
-  afterSkipChange();
-}
-
-/** 自動候補をまとめて採用する（記録パネルの「全部採用」）。 */
-function adoptCandidates(list) {
-  const cur = (S.st.skip_pages || []).filter((r) => !list.some((c) => c.page === r.page));
-  for (const c of list) cur.push({ page: c.page, reason: c.reason, auto: true });
-  S.st.skip_pages = cur;
-  afterSkipChange();
-}
-
-/** 複数ページにまとめて理由を付ける。巻末のデータ集のように十数ページ続くことがあるので、
- *  1ページずつ選ばせない（そこが面倒だと、理由を付けること自体が後回しになる）。 */
-function setSkipReasons(pages, reason) {
-  const set = new Set(pages);
-  S.st.skip_pages = (S.st.skip_pages || [])
-    .map((r) => (set.has(r.page) ? { page: r.page, reason } : r));
-  afterSkipChange();
-}
-
-/** 複数ページの除外をまとめてやめる。 */
-function unskipPages(pages) {
-  const set = new Set(pages);
-  S.st.skip_pages = (S.st.skip_pages || []).filter((r) => !set.has(r.page));
-  afterSkipChange();
-}
-
-$("skipThis").onchange = (e) => toggleSkip(S.page, e.target.checked);
-
-// ツールバーの理由プルダウン。**除外チェックのすぐ隣**に置いてある。
-// ⚠️ 理由を別の画面で後からまとめて付ける形にすると、そのページを見ていないときに
-//    思い出しながら選ぶことになる。原本が目の前にある「今」選ぶのが一番正確。
-function fillReasonPicker() {
-  const sel = $("skipReason");
-  sel.innerHTML = "";
-  sel.appendChild(el("<option value=''>理由を選ぶ…</option>"));
-  for (const t of ((S.info && S.info["手順"]) || [])) {
-    const o = document.createElement("option");
-    o.value = t.key; o.textContent = t.label;
-    sel.appendChild(o);
-  }
-}
-
-function syncReasonPicker() {
-  const sel = $("skipReason");
-  const on = skipSet().has(S.page);
-  sel.hidden = !on;
-  if (!on) return;
-  sel.value = skipReason(S.page);
-  sel.classList.toggle("unset", !sel.value);
-}
-
-$("skipReason").onchange = () => toggleSkip(S.page, true, $("skipReason").value);
-
-function updateSkipUI() {
-  const list = S.st.skip_pages || [];
-  const noReason = list.filter((r) => !r.reason).length;
-  $("skipCount").textContent = list.length
-    ? `${list.length}ページを除外中: ${list.map((r) => r.page).join(", ")}` +
-      (noReason ? `　うち${noReason}件は理由が未設定` : "")
-    : "";
-}
 
 $("loadPages").onclick = () => loadPageList(true);
 
@@ -2322,14 +1898,7 @@ async function loadPageList(force) {
     b.dataset.page = r["ページ"];
     if (r["表数"] > 0) b.classList.add("tbl");
     if (S.ctx && S.ctx["ページ別"] && S.ctx["ページ別"][r["ページ"]]) b.classList.add("hit");
-    if (r["候補"]) b.title += `\n自動候補：${r["候補"]}（${r["候補の根拠"]}）`;
-    b.onclick = (e) => {
-      if (e.shiftKey) {                       // Shift+クリックで除外の切り替え
-        const on = !skipSet().has(r["ページ"]);
-        toggleSkip(r["ページ"], on);
-        if (r["ページ"] === S.page) $("skipThis").checked = on;
-      } else go(r["ページ"]);
-    };
+    b.onclick = () => go(r["ページ"]);
     wrap.appendChild(b);
   }
   markPageList();
@@ -2337,21 +1906,10 @@ async function loadPageList(force) {
   return rows;
 }
 
-/** ページ番号 → 見出し。読み込み前は空。 */
-const headingOf = (p) => {
-  const r = (S.pages || []).find((x) => x["ページ"] === p);
-  return r ? (r["見出し"] || "") : "";
-};
-
 function markPageList() {
-  const skip = skipSet();
-  const cand = {};
-  for (const c of ((S.info && S.info["候補"]) || [])) cand[c.page] = c.reason;
   document.querySelectorAll("#pageList button").forEach((b) => {
     const p = Number(b.dataset.page);
-    b.classList.toggle("skip", skip.has(p));
     b.classList.toggle("cur", p === S.page);
-    b.classList.toggle("cand", !!cand[p] && !skip.has(p));
   });
 }
 
@@ -2362,36 +1920,8 @@ $("saveBtn").onclick = saveSettings;
 // 書き出し。既存ファイルがあれば、上書きするか別名で残すかを選ばせる。
 // 設定を変えて書き出し → KH Coder で見て → また変えて…を繰り返すので、
 // **前の版を潰したかどうかが分からないと比較にならない。**
-$("exportBtn").onclick = () => askUnfinished(() => runExport({}));
-
-/** 手順が片付いていなければ、書き出す前に知らせる。
- *
- * ⚠️ **止めはしない。** 途中の状態で試しに書き出すのは普通の使い方で、
- *    そこで止めると「確認を無視する癖」がつく。**気づかずに通り過ぎるのを防ぐだけ。**
- */
-function askUnfinished(next) {
-  const rows = taskStatus();
-  const must = rows.filter((r) => r.must && r.state === "未確認");
-  const other = rows.filter((r) => !r.must && r.state === "未確認");
-  const orphan = (S.st.skip_pages || []).filter((r) => !r.reason);
-  if (!must.length && !other.length && !orphan.length) return next();
-
-  const li = (title, items) => items.length
-    ? `<p class="note"><b>${title}</b>：${items.join(" ／ ")}</p>` : "";
-  const body = el(
-    `<p class="note">このまま書き出せます。ただし<b>前処理の手順がまだ残っています</b>。
-      他社と同じ手順を踏んだと言うには、ここを埋めておく必要があります。</p>` +
-    li("未確認（外すのが既定）", must.map((r) => r.label)) +
-    li("未確認（見て判断する）", other.map((r) => r.label)) +
-    li("理由が未設定の除外ページ", orphan.map((r) => `p.${r.page}`)) +
-    `<p class="note">記録は設定JSONに残り、そのまま<b>卒論の付録</b>になります。</p>`);
-
-  modal("手順がまだ残っています", body, [
-    { label: "記録を開く", run: showManual },
-    { label: "このまま書き出す", kind: "ghost", run: next },
-    { label: "やめる", kind: "ghost" },
-  ]);
-}
+// 手順チェックリストの「書き出す前の確認」は 2026-08-31 に撤去（ページ除外の廃止）
+$("exportBtn").onclick = () => runExport({});
 
 async function runExport(opts) {
   toast("書き出しています…（文書全体を解析中）", "busy");
@@ -2400,11 +1930,9 @@ async function runExport(opts) {
                         { settings: S.st, ...opts });
     S.saved = JSON.stringify(S.st);      // 書き出しは設定JSONも保存する（＝未保存ではなくなる）
     syncSaveState();
-    const skip = (S.st.skip_pages || []).length;
     toast(`書き出しました：${j["単位数"].toLocaleString()}文` +
       `（${KINDS.map((k) => `${k}${j["内訳"][k] || 0}`).join(" ")}）` +
       ` ／ ${j["文字数"].toLocaleString()}字 ／ ${j["ページ単位数"].toLocaleString()}ページ` +
-      (skip ? `\n${skip}ページを除外した結果です` : "") +
       (ENV["公開モード"] ? "" :
         `\n${j.csv}\n${j.page}\n${j.txt}\n設定JSONも一緒に保存しました` +
         (j["退避"] ? `\n前の設定は ${j["退避"]} に退避しました` : "")),
@@ -2988,6 +2516,57 @@ async function showUnitTable(docs) {
   }
 }
 
+// --- 出現率（RQ1 の材料。2026-08-31 追加） -------------------------------------
+// 冊ごとの 総文数・ヒット文数・総ページ数・ヒットページ数と率。**絶対数と率の両方**を出し、
+// どちらで見ても結論が変わらないことを確認する（→ 検討_2026-08-25_抽出単位方式.md §1）。
+// 🔴 分子・分母とも L1 の機械的検出＝確認モードの手作業（除外・結合）は影響しない
+
+$("ratesBtn").onclick = async () => {
+  try {
+    const j = await runJob({ kind: "rates", docs: SEL.size ? [...SEL] : null },
+      "冊ごとの出現率を数えています…（分子・分母とも機械的検出＝手作業の影響なし）");
+    showRates(j);
+  } catch (e) { toast(String(e.message || e), "err"); }
+};
+
+function showRates(j) {
+  const rows = j.rows || [];
+  const cols = j.cols || [];
+  const sum = (k) => rows.reduce((a, r) => a + (r[k] || 0), 0);
+  const box = document.createElement("div");
+  box.appendChild(el(`<p class="note">冊ごとの<b>絶対数と出現率</b>（RQ1 の材料）。
+    分子・分母とも<b>機械的検出（L1）</b>で、確認モードの手作業（除外・結合）は影響しません
+    ＝手続きで率が動かない数字です。<b>絶対数と率のどちらで見ても結論が変わらないか</b>の確認に使います。<br>
+    検索語（全冊共通）：${(j["検索語"] || []).map((k) => `<code>${esc(k)}</code>`).join(" ")}<br>
+    同じ表を <code>${esc(j.csv || "出現率.csv")}</code> にも書き出しました（Excel でそのまま開けます）。</p>`));
+  const wrap = document.createElement("div");
+  wrap.className = "xtable ratesbox";
+  const t = document.createElement("table");
+  t.innerHTML = "<thead><tr>" + cols.map((c) => `<th>${esc(c)}</th>`).join("") + "</tr></thead>";
+  const tb = document.createElement("tbody");
+  for (const r of rows) {
+    const tr = document.createElement("tr");
+    if (!r["ヒット文数"]) tr.className = "off";       // ヒット0の冊は薄く（分母としてだけ効く）
+    tr.innerHTML = cols.map((c) => `<td>${esc(String(r[c] ?? ""))}</td>`).join("");
+    tb.appendChild(tr);
+  }
+  // 合計行。率は合算から計算し直す（冊ごとの率の平均にはしない）
+  const totS = sum("総文数"), hitS = sum("ヒット文数");
+  const totP = sum("総ページ数"), hitP = sum("ヒットページ数");
+  const tr = document.createElement("tr");
+  tr.className = "total";
+  tr.innerHTML = `<td>合計（${rows.length}冊）</td><td></td><td></td><td></td>` +
+    `<td>${totS.toLocaleString()}</td><td>${hitS}</td>` +
+    `<td>${totS ? (hitS / totS * 100).toFixed(3) : 0}</td>` +
+    `<td>${totP.toLocaleString()}</td><td>${hitP}</td>` +
+    `<td>${totP ? (hitP / totP * 100).toFixed(2) : 0}</td>`;
+  tb.appendChild(tr);
+  t.appendChild(tb);
+  wrap.appendChild(t);
+  box.appendChild(wrap);
+  modal("出現率（冊ごとの絶対数と率）", box, [{ label: "閉じる", kind: "ghost" }]);
+}
+
 // ---------- 確認モード（2026-08-25。卒論では「監査」と呼ぶ手続き） ----------
 // **選んだ文書（未選択なら全部）のヒット箇所を、1本のキューで上から順に確認する。**
 // ✓（確認）は unit_checks として文書ごとの設定JSONに残り、確認までの秒数も記録される
@@ -2999,797 +2578,12 @@ const AU = { docs: [], sets: {}, byDoc: {}, curKey: null, t0: 0, kw: null,
              reasons: null,   // core.OP_REASONS（ジョブの応答に同梱される。→ auReasons）
              pageData: null };// いま右に出しているページの解析結果（繋ぐ操作の照合に使う）
 
-// ⚠️ 確認モードの入口にゲート：切り取りと除外が済んでいない冊があれば、先にそちらへ誘導する。
-//    「フッターで本文が切れている」という発想は抜けやすい（2026-08-26 に実際に見落とした）
-$("auditBtn").onclick = () => {
-  const targets = SEL.size ? [...SEL] : null;
-  const un = bdUnchecked(targets);
-  if (un.length) {
-    modal("先に「切り取りと除外」をどうぞ", el(`<p class="note">
-      対象のうち <b>${un.length}冊</b>が、切り取りと除外（ヘッダー・フッターの境界と除外ページ）を
-      まだ済ませていません。<br>
-      境界が本文を巻き込んでいると、<b>文が途中で切れたまま</b>確認・書き出しに進んでしまいます
-      （実例：D社 2024 p76 — 段の最後の2行がフッター扱いで消えていました）。</p>`), [
-      { label: "切り取りと除外を開く", kind: "primary", run: () => openPrep() },
-      { label: "済ませずに進む", kind: "ghost", run: () => openAudit(targets) },
-    ]);
-    return;
-  }
-  openAudit(targets);
-};
+// 確認モードへ直行（切り取りと除外のゲートは 2026-08-31 に画面ごと撤去）
+$("auditBtn").onclick = () => openAudit(SEL.size ? [...SEL] : null);
 
-// ---------- 切り取りと除外（2026-08-27 に専用画面へ。旧「切り取りの点検」） ----------
-// **原本を見ながら、冊ごとに「フッター境界・ヘッダー境界・除外ページ（表紙・目次）」の
-// 3つを決めて消化していく画面。** 3つ揃うと自動でチェック済みタブへ移る。
-// 判断は設定JSONの boundary_check（除外は skip_pages・task_states）に日付つきで残る。
-//
-// きっかけ（2026-08-26）：D社 2024 p76 で段の最後の2行が footer_margin に巻き込まれ、
-// 生成AIを含む文が途中で切れたまま抽出されていた（同種の取りこぼしが50冊前後）。
-// モーダル版は「開く」を押さないと原本が見えず、1冊ごとの往復がストレスだった（2026-08-27 本人）。
-// → 一覧の中で原本を開き、境界線をその場でドラッグできる形に作り直した。
+// 🔴 「切り取りと除外」（境界の確認画面）は 2026-08-31 に座標カットの廃止とともに撤去した。
+//    経緯は 記録/2026-08-31.md と git 履歴。
 
-const PREP = {
-  sum: null,           // /api/prep の一覧（軽量）
-  full: {},            // name → /api/boundary/<name>（開いた冊だけ）
-  pend: {},            // name → {header, footer, skips: Map(page→理由)} 画面上の未記録の値
-  changed: new Set(),  // 設定を変えた冊（「解析を作り直す」の対象）
-  tab: "todo",
-  cur: null,           // 作業ビューで開いている冊
-};
-
-const PREP_SIDE_KEY = { footer: "footer_margin", header: "header_y" };
-const PREP_SIDE_JP = { footer: "フッター", header: "ヘッダー" };
-
-// el() は DocumentFragment を返す（dataset や style を触れない）。
-// この画面は作った要素に直接触るので、要素そのものを返す版を使う
-const el1 = (html) => el(html).firstElementChild;
-
-// 完了＝3つの判断が揃っていること。旧形式（"判断" 1本＝2026-08-26 以前）も完了と数える
-const prepComplete = (bc) =>
-  !!bc && ("判断" in bc || ["フッター", "ヘッダー", "ページ"].every((k) => k in bc));
-
-function bdUnchecked(targets) {
-  const names = targets || DOCS.map((d) => d.name);
-  return names.filter((n) => {
-    const d = DOCS.find((x) => x.name === n);
-    return d && !d["点検"];
-  });
-}
-
-function updateBdUI() {
-  const n = bdUnchecked(null).length;
-  $("bdBtnLabel").textContent = n ? `切り取りと除外（未 ${n}冊）` : "切り取りと除外";
-  $("bdBtn").classList.toggle("attn", n > 0);
-}
-
-$("bdBtn").onclick = () => openPrep();
-// 一覧へ戻る：作業ビューを開いていれば冊の一覧へ、一覧ならホーム（PDFを選ぶ）へ
-$("prepBack").onclick = () => { if (!$("prepWork").hidden) closePrepWork(); else closePrep(); };
-$("ppwBack").onclick = () => closePrepWork();
-$("prepTabTodo").onclick = () => { PREP.tab = "todo"; prepRender(); };
-$("prepTabDone").onclick = () => { PREP.tab = "done"; prepRender(); };
-
-async function openPrep() {
-  $("pane-open").hidden = true;
-  $("prep").hidden = false;
-  prepUpdateRebuild();
-  try { await prepLoad(); }
-  catch (e) { toast(String(e.message || e), "err"); }
-}
-
-function closePrep() {
-  if (PREP.changed.size) {
-    const n = PREP.changed.size;
-    modal("変えた設定の解析がまだです", el(`<p class="note">
-      余白・除外ページを変えた <b>${n}冊</b>の解析キャッシュが古いままです。<br>
-      今すぐ作り直すか、あとに回すか選んでください（あとに回しても、次にヒットを集めるとき
-      自動で作り直されます。そのぶん待ち時間がそちらに移ります）。</p>`), [
-      { label: `作り直してから戻る（${n}冊）`, kind: "primary",
-        run: async () => { await prepRebuild(); prepReallyClose(); } },
-      { label: "あとで作り直す（そのまま戻る）", kind: "ghost", run: prepReallyClose },
-    ]);
-    return;
-  }
-  prepReallyClose();
-}
-
-function prepReallyClose() {
-  $("prep").hidden = true;
-  $("pane-open").hidden = false;
-  loadDocs();                       // 一覧のバッジ（点検・要再解析）を更新する
-}
-
-async function prepLoad() {
-  $("prepList").innerHTML = `<p class="note empty">一覧を読み込んでいます…</p>`;
-  let r = await api("/api/prep");
-  // 診断がまだの冊だけジョブで走らせる（結果はディスクに残る＝次からは一瞬で開く）
-  const need = r.docs.filter((d) => !d["診断済み"]).map((d) => d.name);
-  if (need.length) {
-    const jr = await runJob({ kind: "boundary", docs: need },
-      `${need.length}冊のヘッダー・フッターを診断しています…（結果は残るので、次からは一瞬で開きます）`);
-    for (const d of (jr && jr.docs) || []) PREP.full[d.name] = d;
-    r = await api("/api/prep");
-  }
-  PREP.sum = r.docs;
-  prepRender();
-}
-
-const prepKwN = (d) => ((d.footer || {})["検索語入り"] || 0) + ((d.header || {})["検索語入り"] || 0);
-const prepCntN = (d) => ((d.footer || {})["件数"] || 0) + ((d.header || {})["件数"] || 0);
-
-function prepProgress() {
-  const docs = PREP.sum || [];
-  const done = docs.filter((d) => d["完了"]).length;
-  $("prepCount").textContent = docs.length ? `済 ${done} / ${docs.length}冊` : "";
-  $("prepBarFill").style.width = docs.length ? `${done / docs.length * 100}%` : "0%";
-  $("prepCntTodo").textContent = docs.length - done;
-  $("prepCntDone").textContent = done;
-}
-
-function prepRender() {
-  const docs = PREP.sum || [];
-  prepProgress();
-  $("prepTabTodo").classList.toggle("on", PREP.tab === "todo");
-  $("prepTabDone").classList.toggle("on", PREP.tab === "done");
-  let list;
-  if (PREP.tab === "todo") {
-    // 並び順は画面にも明記する（下の $("prepOrder")）。急ぐ冊＝検索語を巻き込んでいる冊が先頭
-    list = docs.filter((d) => !d["完了"]).sort((a, b) =>
-      (prepKwN(b) > 0) - (prepKwN(a) > 0) || prepCntN(b) - prepCntN(a)
-      || a.name.localeCompare(b.name, "ja"));
-    $("prepOrder").textContent =
-      "並び順：検索語を巻き込んでいる冊 → 巻き込みが多い冊 → 名前順";
-  } else {
-    const day = (d) => (d["判断"] && d["判断"]["日"]) || "";
-    list = docs.filter((d) => d["完了"]).sort((a, b) =>
-      day(b).localeCompare(day(a)) || a.name.localeCompare(b.name, "ja"));
-    $("prepOrder").textContent = "並び順：判断した日が新しい順";
-  }
-  const box = $("prepList");
-  box.innerHTML = "";
-  if (!list.length) {
-    box.innerHTML = `<p class="note empty">${PREP.tab === "todo"
-      ? "未チェックはありません。全冊そろいました — 「ヒットを確認」に進めます。"
-      : "まだチェック済みの冊はありません。"}</p>`;
-    return;
-  }
-  for (const d of list) box.appendChild(prepCard(d));
-}
-
-function prepDecChips(bc) {
-  return ["フッター", "ヘッダー", "ページ"].map((k) => {
-    const on = !!bc && (("判断" in bc) || (k in bc));
-    return `<span class="pp-chip${on ? " on" : ""}">${on ? ICON("check") : ""}${k}</span>`;
-  }).join("");
-}
-
-function prepCard(d) {
-  const card = el1(`<div class="prep-card"></div>`);
-  card.dataset.name = d.name;
-  const kw = prepKwN(d), cnt = prepCntN(d);
-  const chips = !d["診断済み"] ? `<span class="tag dim">未診断</span>`
-    : cnt ? (kw ? `<span class="tag kwtag">検索語入り ${kw}件</span>` : "")
-            + `<span class="tag warn">巻き込み ${cnt}件</span>`
-    : `<span class="tag ok">巻き込みなし</span>`;
-  card.innerHTML =
-    `<button class="prep-head" type="button" title="クリックで原本を開いて判断する">
-      <span class="pp-chev">${ICON("chev-r")}</span>
-      <b class="pp-name">${esc(d.name)}</b>
-      <span class="pp-tags">${chips}</span>
-      <span class="spacer"></span>
-      <span class="pp-decs">${prepDecChips(d["判断"])}</span>
-    </button>`;
-  card.querySelector(".prep-head").onclick = () => openPrepWork(d.name);
-  return card;
-}
-
-// --- 1冊の作業ビュー（一覧 → クリックで画面いっぱいに開く。2026-08-27 夜） ------
-// アコーディオンの中に2カラムを詰めると、狭い幅で崩れ・広い幅で余りが出て作業しづらい
-// （本人の指摘）。→ 個別の「開く」と同じ発想で、左パネル＋原本ビューアの全画面に変えた。
-
-function prepRoot(name) {
-  return PREP.cur === name ? $("ppwMain") : null;
-}
-
-function ppwChipsUpdate(name) {
-  const row = (PREP.sum || []).find((x) => x.name === name);
-  const bc = (row && row["判断"]) || (PREP.full[name] && PREP.full[name]["判断"]);
-  $("ppwChips").innerHTML = prepDecChips(bc);
-}
-
-async function openPrepWork(name) {
-  PREP.cur = name;
-  $("prepHome").hidden = true;
-  $("prepWork").hidden = false;
-  $("ppwName").textContent = name;
-  ppwChipsUpdate(name);
-  const main = $("ppwMain");
-  main.innerHTML = `<p class="note empty"><span class="minispin"></span>
-    この冊の診断と原本を読み込んでいます…（キャッシュが無い初回だけ数秒かかります）</p>`;
-  if (!PREP.full[name]) {
-    try {
-      PREP.full[name] = await api(`/api/boundary/${encodeURIComponent(name)}`);
-    } catch (e) {
-      main.innerHTML = `<p class="note">読み込みに失敗しました：${esc(String(e.message || e))}</p>`;
-      return;
-    }
-  }
-  if (PREP.cur !== name) return;             // 読み込み中に一覧へ戻っていた
-  const pay = PREP.full[name];
-  const pend = PREP.pend[name] || (PREP.pend[name] = {
-    header: pay["設定"].header_y,
-    footer: pay["設定"].footer_margin,
-    skips: null,
-  });
-  if (!pend.skips) {
-    pend.skips = new Map();
-    for (const r of pay["除外済み"] || []) {
-      if (r.reason === "表紙" || r.reason === "目次") pend.skips.set(Number(r.page), r.reason);
-    }
-  }
-  main.innerHTML = "";
-  main.appendChild(prepPanel(name));
-  main.appendChild(prepViewer(name, main));
-  queueMicrotask(() => { prepSyncBounds(name); prepSyncSkips(name); });
-}
-
-function closePrepWork() {
-  const main = $("ppwMain");
-  if (main._io) { main._io.disconnect(); main._io = null; }   // 遅延読み込みを止める
-  main.innerHTML = "";
-  PREP.cur = null;
-  $("prepWork").hidden = true;
-  $("prepHome").hidden = false;
-  prepRender();                    // 並び直し（完了した冊はチェック済みタブへ移っている）
-}
-
-// --- カードの中身＝左：判断パネル／右：大きな原本ビューア（2026-08-27 夕方に作り直し） ---
-// 本人の要望：原本を大きく（拡大率つき）・ヘッダーも線でドラッグ・上下の線を同時にいじって
-// **一度に記録**・除外ページも実物を見ながら決めたい。
-// → サイドごと／目的ごとの小さなページ画像をやめ、**1冊＝1本のビューア**に統一した。
-// 全ページを縦に並べ（画像は見えたときだけ取得）、どのページにも上下2本の境界線が出る。
-
-const PREP_BASEW = 840;      // 拡大率100%のときのページ幅(px)
-
-let PREPZOOM = (() => {
-  const v = parseInt(localStorage.getItem("prepZoom"), 10);
-  return v >= 50 && v <= 300 ? v : 100;
-})();
-
-// ページ画像を取りに行くときの倍率。表示の拡大率に合わせて上げる（大きく見ても
-// ぼやけないように）。0.2刻みに丸めるのはサーバー側の画像キャッシュに当てるため
-const prepReqZoom = () => Math.min(3, Math.max(1.2, Math.round(1.2 * PREPZOOM / 100 * 5) / 5));
-const prepImgUrl = (name, p) =>
-  `/api/doc/${encodeURIComponent(name)}/page/${p}.jpg?zoom=${prepReqZoom()}`;
-
-const prepCardEl = (name) =>
-  $("prepList").querySelector(`.prep-card[data-name="${CSS.escape(name)}"]`);
-
-// --- 左：判断パネル（① 境界 ② 除外ページ） ------------------------------------
-
-function prepPanel(name) {
-  const pay = PREP.full[name];
-  const bc = pay["判断"] || {};
-  const bDecided = ("判断" in bc) ? bc["判断"]
-    : (bc["ヘッダー"] || bc["フッター"])
-      ? `ヘッダー：${bc["ヘッダー"] || "—"}／フッター：${bc["フッター"] || "—"}` : null;
-  const pDecided = ("判断" in bc) ? "点検済み（前の画面）" : bc["ページ"];
-  const others = (pay["除外済み"] || []).filter((r) => r.reason !== "表紙" && r.reason !== "目次");
-
-  const sideRow = (s, label) => {
-    const d = pay[s] || {};
-    return `<div class="pp-brow" data-side="${s}">
-      <label>${label} <input class="pp-val" type="number" min="0" step="1"> pt</label>
-      ${d["提案"] != null && d["提案"] !== d["現在"]
-        ? `<button class="mini ghost pp-sug">提案 ${d["提案"]}</button>` : ""}
-      <span class="pp-live hint"></span>
-      ${d["干渉"] ? `<div class="pp-clash">ページ番号が本文より内側にあり、値だけでは分けられません。
-        原本を見てどちらを取るか決めてください（戻った番号は短いので、たいてい単位には入りません）</div>` : ""}
-    </div>`;
-  };
-
-  const panel = el1(`<div class="pp-panel">
-    <section class="pp-sec" data-sec="bounds">
-      <h4><span class="pp-step">1</span>境界（ヘッダー・フッター）
-        ${bDecided ? `<span class="tag ok">${ICON("check")}記録済み</span>` : ""}</h4>
-      ${bDecided ? `<p class="hint pp-prev">前回の判断：${esc(bDecided)}</p>` : ""}
-      ${sideRow("header", "ヘッダー上端")}
-      ${sideRow("footer", "フッター余白")}
-      <div class="pp-jump"></div>
-      <div class="pp-acts"><button class="mini primary pp-rec-b"></button></div>
-      <p class="hint">上下まとめて記録します（設定JSONの boundary_check に日付つき）</p>
-    </section>
-    <section class="pp-sec" data-sec="pages">
-      <h4><span class="pp-step">2</span>除外ページ（表紙・目次）
-        ${pDecided ? `<span class="tag ok">${ICON("check")}記録済み：${esc(pDecided)}</span>` : ""}</h4>
-      <p class="pp-sum">右の原本で、除外中のページは暗く出ます。ページ見出しの「除外する」で追加、
-        暗い覆いをクリックで解除。ここで決めるのは<b>表紙と目次だけ</b>です。</p>
-      ${others.length ? `<p class="hint pp-others">ほかの理由の除外（ここでは変えません）：
-        ${others.map((r) => `<button class="mini ghost pp-jchip" data-p="${r.page}"
-          title="クリックでこのページへ">p${r.page} ${esc(r.reason || "理由なし")}</button>`).join(" ")}</p>` : ""}
-      <div class="pp-skipstat hint"></div>
-      <div class="pp-acts"><button class="mini primary pp-rec-p"></button></div>
-    </section>
-    <p class="hint">表の範囲や別の理由の除外など、もっと細かく直したいときは
-      <button class="mini ghost pp-open">この冊を開く</button></p>
-  </div>`);
-
-  // 巻き込みページへのジャンプ（検索語入り → 境界に近い順。ビューアをその場でスクロール）
-  const pgs = new Map();
-  for (const s of ["header", "footer"]) {
-    for (const r of (pay[s] || {})["行"] || []) {
-      if (r["分類"] !== "本文") continue;
-      const g = pgs.get(r["ページ"]) || { kw: false, depth: 1e9 };
-      g.kw = g.kw || r["検索語"];
-      g.depth = Math.min(g.depth, r["深さ"]);
-      pgs.set(r["ページ"], g);
-    }
-  }
-  const order = [...pgs.entries()]
-    .sort((a, b) => (b[1].kw - a[1].kw) || (a[1].depth - b[1].depth)).map(([p]) => p);
-  const jump = panel.querySelector(".pp-jump");
-  if (order.length) {
-    jump.appendChild(el(`<span class="hint">巻き込みページ（クリックで移動）：</span>`));
-    for (const p of order.slice(0, 14)) {
-      const b = el1(`<button class="mini ghost pp-jchip${pgs.get(p).kw ? " kw" : ""}"
-        title="${pgs.get(p).kw ? "検索語を含む行が切られています" : "本文らしき行が切られています"}">p${p}</button>`);
-      b.onclick = () => prepJump(name, p);
-      jump.appendChild(b);
-    }
-    if (order.length > 14) jump.appendChild(el(`<span class="hint">他 ${order.length - 14}ページ</span>`));
-  }
-
-  for (const s of ["header", "footer"]) {
-    const row = panel.querySelector(`.pp-brow[data-side="${s}"]`);
-    row.querySelector(".pp-val").onchange = (e) => prepSetVal(name, s, parseFloat(e.target.value));
-    const sug = row.querySelector(".pp-sug");
-    if (sug) sug.onclick = () => prepSetVal(name, s, (pay[s] || {})["提案"]);
-  }
-  panel.querySelector(".pp-rec-b").onclick = () => prepRecordBounds(name);
-  panel.querySelector(".pp-rec-p").onclick = () => prepRecordSkips(name);
-  panel.querySelector(".pp-open").onclick = () => { prepReallyClose(); openDoc(name); };
-  for (const b of panel.querySelectorAll(".pp-others .pp-jchip")) {
-    b.onclick = () => prepJump(name, parseInt(b.dataset.p, 10));
-  }
-  return panel;
-}
-
-// --- 右：ビューア（全ページ・遅延読み込み・拡大率） ----------------------------
-
-function prepViewer(name, body) {
-  const pay = PREP.full[name];
-  const total = pay["総ページ"] || 0;
-  const v = el1(`<div class="pp-viewer">
-    <div class="pp-vtools">
-      <button class="ghost mini pp-zout" title="縮小">−</button>
-      <input class="pp-zoom" type="range" min="50" max="300" step="10" title="表示の拡大率">
-      <button class="ghost mini pp-zin" title="拡大">＋</button>
-      <span class="pp-zpct hint"></span>
-      <span class="spacer"></span>
-      <span class="hint">青い線をドラッグで境界を調整／Ctrl+ホイールで拡大縮小</span>
-    </div>
-    <div class="pp-scroll"></div>
-  </div>`);
-  const scroll = v.querySelector(".pp-scroll");
-
-  // 画像は**見えたページだけ**取りに行く（300ページの冊でも開いた瞬間は軽い）
-  const io = new IntersectionObserver((ents) => {
-    for (const e of ents) {
-      if (!e.isIntersecting) continue;
-      const img = e.target;
-      if (!img.src) { img.src = prepImgUrl(name, img.dataset.page); img.dataset.rz = prepReqZoom(); }
-      io.unobserve(img);
-    }
-  }, { root: scroll, rootMargin: "900px 0px" });
-  body._io = io;
-
-  for (let p = 1; p <= total; p++) scroll.appendChild(prepVPage(name, p, io));
-
-  // 拡大率。表示はCSS変数1つで一括（即応）。読み込み済みの画像は、倍率が大きく
-  // 変わったときだけ差し替える（サーバーに無駄なレンダリングをさせない）
-  const slider = v.querySelector(".pp-zoom"), pct = v.querySelector(".pp-zpct");
-  const setZ = (z) => {
-    PREPZOOM = Math.max(50, Math.min(300, Math.round(z / 10) * 10));
-    try { localStorage.setItem("prepZoom", String(PREPZOOM)); } catch (e) { /* 保存できなくても動く */ }
-    slider.value = PREPZOOM;
-    pct.textContent = `${PREPZOOM}%`;
-    scroll.style.setProperty("--pz", PREPZOOM / 100);
-    const rz = prepReqZoom();
-    for (const img of scroll.querySelectorAll("img[src]")) {
-      if (Math.abs(parseFloat(img.dataset.rz || 0) - rz) >= 0.4) {
-        img.src = prepImgUrl(name, img.dataset.page);
-        img.dataset.rz = rz;
-      }
-    }
-  };
-  slider.oninput = () => setZ(parseInt(slider.value, 10));
-  v.querySelector(".pp-zout").onclick = () => setZ(PREPZOOM - 10);
-  v.querySelector(".pp-zin").onclick = () => setZ(PREPZOOM + 10);
-  scroll.addEventListener("wheel", (e) => {
-    if (!e.ctrlKey) return;
-    e.preventDefault();
-    setZ(PREPZOOM + (e.deltaY < 0 ? 10 : -10));
-  }, { passive: false });
-  setZ(PREPZOOM);
-  return v;
-}
-
-/** ビューアの1ページ：原本画像＋上下の境界線（ドラッグ可）＋落ちた行の枠＋除外の覆い。 */
-function prepVPage(name, p, io) {
-  const pay = PREP.full[name];
-  const [w, h] = (pay["寸法"] || {})[String(p)] || [595, 842];
-  const rows = [];
-  for (const s of ["header", "footer"]) {
-    for (const r of (pay[s] || {})["行"] || []) {
-      if (r["ページ"] === p && (r["分類"] === "本文" || r["分類"] === "番号")) rows.push({ ...r, side: s });
-    }
-  }
-  const cand = (pay["除外候補"] || []).find((c) => c.page === p);
-  const fig = el1(`<figure class="pp-vpage" data-page="${p}">
-    <figcaption>p${p}
-      ${rows.some((r) => r["検索語"]) ? `<span class="pp-kw">検索語入り</span>` : ""}
-      ${cand ? `<span class="pp-cand" title="根拠：${esc(cand.why || "")}">候補：${esc(cand.reason)}</span>` : ""}
-      <span class="spacer"></span>
-      <button class="mini ghost pp-exbtn">除外する</button>
-    </figcaption>
-    <div class="pp-canvas" style="aspect-ratio:${w} / ${h}">
-      <img data-page="${p}" alt="p${p}">
-      <div class="pp-exd" hidden><div class="pp-exd-tag"></div></div>
-    </div></figure>`);
-  const cv = fig.querySelector(".pp-canvas");
-  io.observe(fig.querySelector("img"));
-
-  for (const r of rows) {
-    const [x0, y0, x1, y1] = r.rect;
-    const box = el1(`<div class="pp-rect" title="${esc(r.text)}"></div>`);
-    box.style.left = `${x0 / w * 100}%`;
-    box.style.top = `${y0 / h * 100}%`;
-    box.style.width = `${(x1 - x0) / w * 100}%`;
-    box.style.height = `${(y1 - y0) / h * 100}%`;
-    box.dataset.depth = r["深さ"];
-    box.dataset.cls = r["分類"];
-    box.dataset.side = r.side;
-    cv.appendChild(box);
-  }
-
-  for (const side of ["header", "footer"]) {
-    const line = el1(`<div class="pp-vline" data-side="${side}"
-      title="ドラッグで${side === "header" ? "ヘッダー" : "フッター"}の境界を動かせます"><span class="pp-line-tag"></span></div>`);
-    line.dataset.h = h;
-    line.onpointerdown = (e) => {
-      e.preventDefault();
-      line.setPointerCapture(e.pointerId);
-      line.classList.add("drag");
-      line.onpointermove = (ev) => {
-        const r = cv.getBoundingClientRect();
-        const frac = Math.min(1, Math.max(0, (ev.clientY - r.top) / r.height));
-        let val = Math.round(side === "footer" ? h * (1 - frac) : h * frac);
-        val = Math.max(0, Math.min(Math.round(h * 0.45), val));
-        prepSetVal(name, side, val);
-      };
-      line.onpointerup = () => {
-        line.onpointermove = null;
-        line.onpointerup = null;
-        line.classList.remove("drag");
-      };
-    };
-    cv.appendChild(line);
-  }
-
-  // 除外の付け外し。覆い（暗い部分）のクリックで解除、理由は覆いの上で切り替え
-  fig.querySelector(".pp-exbtn").onclick = () => prepToggleSkip(name, p);
-  fig.querySelector(".pp-exd").onclick = (e) => {
-    const pend = PREP.pend[name];
-    const rz = e.target.closest(".rz");
-    if (rz) { pend.skips.set(p, rz.dataset.r); prepSyncSkips(name); return; }
-    if (pend.skips.has(p)) { pend.skips.delete(p); prepSyncSkips(name); }
-  };
-  return fig;
-}
-
-function prepJump(name, p) {
-  const root = prepRoot(name);
-  const scroll = root && root.querySelector(".pp-scroll");
-  const fig = scroll && scroll.querySelector(`.pp-vpage[data-page="${p}"]`);
-  if (!fig) return;
-  scroll.scrollTo({ top: fig.offsetTop - 8, behavior: "smooth" });
-  fig.classList.remove("flash");
-  void fig.offsetWidth;                       // アニメーションを毎回やり直すための再計算
-  fig.classList.add("flash");
-}
-
-function prepToggleSkip(name, p) {
-  const pay = PREP.full[name], pend = PREP.pend[name];
-  if (pend.skips.has(p)) pend.skips.delete(p);
-  else {
-    const cand = (pay["除外候補"] || []).find((c) => c.page === p);
-    pend.skips.set(p, cand ? cand.reason : (p === 1 || p === (pay["総ページ"] || 0) ? "表紙" : "目次"));
-  }
-  prepSyncSkips(name);
-}
-
-// --- 値を変えたら画面をそろえる（判定は全部ブラウザ側＝ドラッグに即応する） ------
-
-function prepSetVal(name, side, v) {
-  const pay = PREP.full[name];
-  if (!Number.isFinite(v) || v < 0) v = pay["設定"][PREP_SIDE_KEY[side]];
-  PREP.pend[name][side] = Math.max(0, Math.min(400, Math.round(v)));
-  prepSyncBounds(name);
-}
-
-function prepSyncBounds(name) {
-  const card = prepRoot(name);
-  if (!card) return;
-  const pay = PREP.full[name], pend = PREP.pend[name];
-  for (const s of ["header", "footer"]) {
-    const vv = pend[s], cur = pay["設定"][PREP_SIDE_KEY[s]];
-    const row = card.querySelector(`.pp-brow[data-side="${s}"]`);
-    if (!row) continue;
-    row.querySelector(".pp-val").value = vv;
-    let cut = 0, back = 0;
-    for (const r of (pay[s] || {})["行"] || []) {
-      if (r["分類"] === "本文" && r["深さ"] < vv) cut++;
-      else if (r["分類"] === "番号" && r["深さ"] >= vv) back++;
-    }
-    row.querySelector(".pp-live").innerHTML =
-      `${vv !== cur ? `${cur} → <b>${vv}</b>：` : ""}切られる本文 <b class="${cut ? "pp-bad" : "pp-ok"}">${cut}件</b>・戻る番号 ${back}件`;
-  }
-  for (const line of card.querySelectorAll(".pp-vline")) {
-    const s = line.dataset.side, hh = parseFloat(line.dataset.h), vv = pend[s];
-    line.style.top = `${(s === "footer" ? 1 - vv / hh : vv / hh) * 100}%`;
-    line.querySelector(".pp-line-tag").textContent = `${s === "footer" ? "下" : "上"}から ${vv}pt`;
-  }
-  for (const box of card.querySelectorAll(".pp-rect")) {
-    const vv = pend[box.dataset.side];
-    const depth = parseFloat(box.dataset.depth);
-    if (box.dataset.cls === "本文") {
-      box.classList.toggle("cut", depth < vv);
-      box.classList.toggle("save", depth >= vv);
-    } else {
-      box.classList.toggle("back", depth >= vv);
-      box.classList.toggle("gone", depth < vv);
-    }
-  }
-  const hCh = pend.header !== pay["設定"].header_y;
-  const fCh = pend.footer !== pay["設定"].footer_margin;
-  const btn = card.querySelector(".pp-rec-b");
-  if (btn) {
-    btn.textContent = (hCh || fCh)
-      ? `境界を記録する（ヘッダー ${hCh ? `${pay["設定"].header_y}→${pend.header}` : "そのまま"}・フッター ${fCh ? `${pay["設定"].footer_margin}→${pend.footer}` : "そのまま"}）`
-      : "境界を記録する（上下とも問題なし）";
-  }
-}
-
-function prepSyncSkips(name) {
-  const card = prepRoot(name);
-  if (!card) return;
-  const pay = PREP.full[name], pend = PREP.pend[name];
-  const others = new Map((pay["除外済み"] || [])
-    .filter((r) => r.reason !== "表紙" && r.reason !== "目次")
-    .map((r) => [Number(r.page), r.reason || "除外"]));
-  for (const fig of card.querySelectorAll(".pp-vpage")) {
-    const p = parseInt(fig.dataset.page, 10);
-    const sel = pend.skips.get(p), other = others.get(p);
-    const exd = fig.querySelector(".pp-exd");
-    const btn = fig.querySelector(".pp-exbtn");
-    if (sel) {
-      exd.hidden = false;
-      exd.classList.remove("ro");
-      exd.querySelector(".pp-exd-tag").innerHTML = `除外中：
-        <button class="rz${sel === "表紙" ? " on" : ""}" data-r="表紙">表紙</button>
-        <button class="rz${sel === "目次" ? " on" : ""}" data-r="目次">目次</button>`;
-      exd.title = "クリックで除外を解除（理由はボタンで切り替え）";
-      btn.hidden = true;
-    } else if (other) {
-      exd.hidden = false;
-      exd.classList.add("ro");
-      exd.querySelector(".pp-exd-tag").textContent = `除外中：${other}（この画面では変えません）`;
-      exd.title = "";
-      btn.hidden = true;
-    } else {
-      exd.hidden = true;
-      btn.hidden = false;
-    }
-  }
-  const sel = [...pend.skips.entries()].sort((a, b) => a[0] - b[0]);
-  const stat = card.querySelector(".pp-skipstat");
-  if (stat) {
-    // 除外中のページはチップ＝クリックでそのページへ飛べる（原本で確かめられるように）
-    stat.innerHTML = sel.length
-      ? `いまの選択：` + sel.map(([p, r]) =>
-          `<button class="mini ghost pp-jchip" data-p="${p}" title="クリックでこのページへ">p${p} ${esc(r)}</button>`).join(" ")
-      : "いまの選択：除外なし";
-    for (const b of stat.querySelectorAll(".pp-jchip")) {
-      b.onclick = () => prepJump(name, parseInt(b.dataset.p, 10));
-    }
-  }
-  const btn = card.querySelector(".pp-rec-p");
-  if (btn) btn.textContent = sel.length ? `この ${sel.length}ページの除外で記録する` : "除外なしで記録する";
-}
-
-// --- 記録（境界は上下まとめて1回。除外ページは従来どおり） ----------------------
-
-async function prepRecordBounds(name) {
-  const pay = PREP.full[name], pend = PREP.pend[name];
-  const notes = {};
-  for (const s of ["header", "footer"]) {
-    const cur = pay["設定"][PREP_SIDE_KEY[s]];
-    notes[s] = pend[s] !== cur
-      ? `${s === "header" ? "ヘッダー上端" : "フッター余白"} ${cur}→${pend[s]}`
-      : "問題なし";
-  }
-  const bc = await prepDecide(name, (st, b) => {
-    for (const s of ["header", "footer"]) {
-      if (pend[s] !== pay["設定"][PREP_SIDE_KEY[s]]) {
-        st[PREP_SIDE_KEY[s]] = pend[s];
-        PREP.changed.add(name);
-      }
-      b[PREP_SIDE_JP[s]] = notes[s];
-    }
-  });
-  if (!bc) return;
-  pay["設定"].header_y = pend.header;
-  pay["設定"].footer_margin = pend.footer;
-  prepSyncBounds(name);
-  const card = prepRoot(name);
-  const h4 = card && card.querySelector('.pp-sec[data-sec="bounds"] h4');
-  if (h4) {
-    const old = h4.querySelector(".tag");
-    if (old) old.remove();
-    h4.insertAdjacentHTML("beforeend", ` <span class="tag ok">${ICON("check")}記録済み</span>`);
-  }
-}
-
-async function prepRecordSkips(name) {
-  const pay = PREP.full[name], pend = PREP.pend[name];
-  const cands = pay["除外候補"] || [];
-  const sel = [...pend.skips.entries()].sort((a, b) => a[0] - b[0]);
-  const before = (pay["除外済み"] || [])
-    .filter((r) => r.reason === "表紙" || r.reason === "目次")
-    .map((r) => `${r.page}|${r.reason}`).sort().join(",");
-  const after = sel.map(([p, r]) => `${p}|${r}`).sort().join(",");
-  const bc = await prepDecide(name, (st, b) => {
-    const keep = (st.skip_pages || []).filter((r) => r.reason !== "表紙" && r.reason !== "目次");
-    const wasAuto = new Set((st.skip_pages || [])
-      .filter((r) => r.auto).map((r) => `${r.page}|${r.reason}`));
-    st.skip_pages = keep
-      .concat(sel.map(([p, r]) => wasAuto.has(`${p}|${r}`)
-        ? { page: p, reason: r, auto: true } : { page: p, reason: r }))
-      .sort((a, b) => a.page - b.page);
-    // 「記録」パネルと同じ task_states に結論を残す：除外があれば skip_pages から導かれる。
-    // 無ければ「候補があったのに残した」か「見た上で該当なし」かを分けて書く
-    const ts = (st.task_states || []).filter((t) => t.key !== "表紙" && t.key !== "目次");
-    for (const key of ["表紙", "目次"]) {
-      if (!sel.some(([, r]) => r === key)) {
-        ts.push({ key, state: cands.some((c) => c.reason === key) ? "残した" : "該当なし",
-                  memo: "切り取りと除外の画面で判断" });
-      }
-    }
-    st.task_states = ts;
-    b["ページ"] = sel.length ? sel.map(([p, r]) => `p${p} ${r}`).join("・") : "除外なし";
-    if (before !== after) PREP.changed.add(name);
-  });
-  if (!bc) return;
-  pay["除外済み"] = (pay["除外済み"] || [])
-    .filter((r) => r.reason !== "表紙" && r.reason !== "目次")
-    .concat(sel.map(([p, r]) => ({ page: p, reason: r })));
-  prepSyncSkips(name);
-  const card = prepRoot(name);
-  const h4 = card && card.querySelector('.pp-sec[data-sec="pages"] h4');
-  if (h4) {
-    const old = h4.querySelector(".tag");
-    if (old) old.remove();
-    h4.insertAdjacentHTML("beforeend",
-      ` <span class="tag ok">${ICON("check")}記録済み：${esc(bc["ページ"] || "")}</span>`);
-  }
-}
-
-// --- 判断の保存と、完了したときの退場 -----------------------------------------
-
-/** 設定JSONを読んで mut(設定, boundary_check) を当てて保存する。戻り値＝boundary_check（失敗なら null）。 */
-async function prepDecide(name, mut) {
-  try {
-    const conf = await api(`/api/doc/${encodeURIComponent(name)}/conf`);
-    const st = conf["設定"];
-    const bc = (st.boundary_check && typeof st.boundary_check === "object") ? st.boundary_check : {};
-    const wasDone = prepComplete(bc);          // この記録で「完了」に変わったかを後で見る
-    mut(st, bc);
-    bc["日"] = new Date().toISOString().slice(0, 10);
-    st.boundary_check = bc;
-    await api(`/api/doc/${encodeURIComponent(name)}/settings`, { settings: st });
-    if (PREP.full[name]) PREP.full[name]["判断"] = bc;
-    const row = (PREP.sum || []).find((x) => x.name === name);
-    if (row) { row["判断"] = bc; row["完了"] = prepComplete(bc); }
-    const drow = DOCS.find((x) => x.name === name);
-    if (drow) drow["点検"] = prepComplete(bc);
-    updateBdUI();
-    prepUpdateRebuild();
-    prepAfterDecide(name, bc, wasDone);
-    return bc;
-  } catch (e) {
-    toast(`${name}: ${e.message || e}`, "err");
-    return null;
-  }
-}
-
-function prepAfterDecide(name, bc, wasDone) {
-  const card = prepCardEl(name);               // 一覧のカード（隠れていても更新しておく）
-  if (card) {
-    const decs = card.querySelector(".pp-decs");
-    if (decs) decs.innerHTML = prepDecChips(bc);
-  }
-  if (PREP.cur === name) ppwChipsUpdate(name);
-  prepProgress();
-  // この記録で3つ揃った冊は、少し見せてから一覧へ戻る（一覧では並び直って次の冊が先頭）
-  if (!wasDone && prepComplete(bc)) {
-    const todoLeft = (PREP.sum || []).filter((d) => !d["完了"]).length;
-    toast(todoLeft
-      ? `${name} をチェック済みへ移しました（残り ${todoLeft}冊）`
-      : `${name} で最後です。全冊チェック済みになりました`, "ok");
-    if (PREP.cur === name) {
-      setTimeout(() => { if (PREP.cur === name) closePrepWork(); }, 900);
-    }
-  }
-}
-
-// --- 解析の作り直し（手動。何をするかを先に見せる） ----------------------------
-
-function prepUpdateRebuild() {
-  const n = PREP.changed.size;
-  $("prepRebuildLabel").textContent = n ? `解析を作り直す（${n}冊）` : "解析を作り直す";
-  $("prepRebuild").disabled = !n;
-  $("prepRebuild").classList.toggle("attn", n > 0);
-}
-
-$("prepRebuild").onclick = () => {
-  if (!PREP.changed.size) return;
-  const names = [...PREP.changed].sort();
-  modal("解析を作り直す", el(`<div style="max-width:560px">
-    <p class="note">余白・除外ページを変えた <b>${names.length}冊</b>を、新しい設定で解析し直します：</p>
-    <p class="kwchips">${names.map((n) => `<code>${esc(n)}</code>`).join(" ")}</p>
-    <p class="note">やることは3つです：<br>
-      ① 全ページから行を集め直す（変えた境界で切り直す）<br>
-      ② 文の組み立てと、検索語のヒットを集め直す<br>
-      ③ 解析キャッシュを新しい結果で書き換える</p>
-    <p class="note">1冊 数十秒・同時4冊で進みます。ヒット数や単位数が変わることがあり、
-      変わったぶんは確認モードのキューに未確認として出ます。</p></div>`), [
-    { label: `作り直す（${names.length}冊）`, kind: "primary", run: prepRebuild },
-    { label: "やめておく", kind: "ghost" },
-  ]);
-};
-
-async function prepRebuild() {
-  const names = [...PREP.changed];
-  if (!names.length) return;
-  try {
-    await runJob({ kind: "warm", docs: names },
-      `${names.length}冊を新しい設定で解析し直しています…`);
-    PREP.changed.clear();
-    for (const n of names) delete PREP.full[n];   // 診断も古くなった（次に開くとき取り直す）
-    prepUpdateRebuild();
-    toast(`${names.length}冊の解析を作り直しました`, "ok");
-    loadDocs();
-    if (!$("prep").hidden) await prepLoad();      // 診断を新しい設定で取り直して一覧を更新
-  } catch (e) { toast(String(e.message || e), "err"); }
-}
-
-$("prepHelp").onclick = () => modal("切り取りと除外 — この画面でできること", el(`<div style="max-width:560px">
-  <p class="note">1冊につき判断は2回：<b>① 境界（ヘッダー・フッター）</b>と<b>② 除外ページ</b>。
-    どちらも記録すると自動でチェック済みタブへ移ります。</p>
-  <p class="note"><b>① 境界</b> — 右の原本に、どのページにも<b>上下2本の青い線</b>が出ています。
-    どのページの線をドラッグしても冊全体に効きます（数値入力・提案ボタンでも）。
-    <b class="pp-bad">赤</b>＝この値で切られる本文、<b class="pp-ok">緑</b>＝残る本文、
-    橙＝戻ってくるページ番号が即座に変わります。左の「巻き込みページ」から現場に飛べます。
-    ちょうどよい位置で「境界を記録する」（上下まとめて1回）。</p>
-  <p class="note"><b>② 除外ページ</b> — 原本を見ながら決めます。除外中のページは<b>暗い覆い</b>つきで
-    表示され、覆いをクリックで解除、理由（表紙／目次）は覆いの上で切り替え。
-    除外していないページは、ページ見出しの「除外する」で追加できます。決めるのは表紙・目次だけです。</p>
-  <p class="note">表示の大きさはビューア上部の<b>拡大率</b>か Ctrl+ホイールで変えられます（次の冊にも引き継がれます）。
-    判断は設定JSONの <code>boundary_check</code>（除外は <code>skip_pages</code>・<code>task_states</code>）に
-    日付つきで残り、卒論の付録の材料になります。余白や除外を変えたら、最後に右上の
-    <b>「解析を作り直す」</b>を押してください（押し忘れても、次にヒットを集めるとき自動で作り直されます）。</p></div>`), [
-  { label: "閉じる", kind: "ghost" },
-]);
 $("auditBack").onclick = () => closeAudit();
 $("auditOnlyTodo").onchange = () => renderAuditList();
 $("auditPreview").onclick = () => showUnitTable(AU.docs.length ? AU.docs : null);
@@ -4081,6 +2875,13 @@ const AU_FALLBACK_REASONS = {
     { key: "誤ヒット", label: "検索語の誤ヒット" },
     { key: "断片", label: "語として意味を成さない断片" },
     { key: "柱の取り残し", label: "柱・ナビの取り残し" },
+    // 2026-08-31 ページ除外・座標カットの廃止に伴い追加（→ core.OP_REASONS）
+    { key: "目次", label: "目次の項目" },
+    { key: "表紙", label: "表紙・裏表紙の文言" },
+    { key: "章扉", label: "章扉の章題・ナビ" },
+    { key: "対照表", label: "対照表・索引の項目" },
+    { key: "ヘッダー", label: "ヘッダーのため除外（章名ナビ・柱）" },
+    { key: "フッター", label: "フッターのため除外（ページ番号・欄外）" },
   ],
   excluded: [
     { key: "参照表記", label: "参照・リンク表記（「詳しくはP.○○」など）" },
@@ -4477,6 +3278,29 @@ function renderAuditDetail(it) {
     gotoNextTodo();
   };
   bar.appendChild(okBtn);
+
+  // 確認済みの単位を見直しているとき用：✓ を外して「未確認」に戻す（2026-08-31 追加）。
+  // 見直して判断を保留したいときに、もう一度キューへ戻せる。記録（unit_checks）からも消える
+  if (u["確認"]) {
+    const undo = document.createElement("button");
+    undo.className = "ghost";
+    undo.innerHTML = ICON("undo") + "✓を取り消す";
+    undo.title = "確認の印を外して「未確認」に戻します（確認日時・秒数の記録も消えます）";
+    undo.onclick = async () => {
+      const a = unitAnchor(u);
+      const st2 = AU.sets[doc];
+      st2.unit_checks = (st2.unit_checks || []).filter(
+        (c) => !(c.page === a.page && c.hit === a.text));
+      u["確認"] = false;
+      u["確認秒"] = 0;
+      await auditSave(doc);
+      AU.t0 = Date.now();               // 確認までの秒数はここから測り直す
+      renderAuditList();
+      renderAuditDetail(it);            // 同じカードに留まる（もう一度判断できるように）
+      toast("未確認に戻しました", "ok");
+    };
+    bar.appendChild(undo);
+  }
 
   if (!excluded) {
     const sel = document.createElement("select");

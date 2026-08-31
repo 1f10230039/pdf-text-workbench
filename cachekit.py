@@ -30,11 +30,13 @@ CACHE_DIR = DATA / ".cache"
 
 # extract_doc の結果を**変えない**フィールドは署名から外す：
 #   ・unit_*      … 抽出単位（L2）の手作業と確認印。入れると「1件確認するたびに全文解析し直し」
-#   ・boundary_check・task_states … 人の判断の**記録**（切り取りと除外・記録パネル）。
-#     入れると「問題なし」と記録しただけで全冊が要再解析になる（2026-08-27 に実際に起きた。
-#     この2つを直す判断＝header_y や skip_pages を変えたときは、そちらが署名を変える）
+#   ・boundary_check・task_states … 人の判断の**記録**（旧・切り取りと除外／記録パネル）。
+#     入れると「問題なし」と記録しただけで全冊が要再解析になる（2026-08-27 に実際に起きた）
+#   ・skip_pages  … 2026-08-31 にページ除外の**適用を廃止**（分母は全ページ・全文）。
+#     記録としては設定JSONに残るが、extract_doc は見ないので署名にも入れない
+#     （同日、座標カット header_y / footer_margin は Settings ごと廃止＝署名からも自然に消えた）
 L2_ONLY_FIELDS = ("unit_merges", "unit_excludes", "unit_checks",
-                  "boundary_check", "task_states")
+                  "boundary_check", "task_states", "skip_pages")
 
 
 def set_data_dir(path):
@@ -122,24 +124,16 @@ def load_cands(name: str, get_doc=None) -> dict:
     return out
 
 
-def auto_skips(name: str, get_doc=None) -> list[dict]:
-    """設定JSONが無い文書の始め方：表紙・目次の自動候補を除外に入れる（画面とバッチで共通）。"""
-    try:
-        return [{"page": c["page"], "reason": c["reason"], "auto": True}
-                for c in load_cands(name, get_doc)["cands"]
-                if c["reason"] in ("表紙", "目次")]
-    except Exception:
-        return []
-
-
 def load_settings(name: str, get_doc=None) -> tuple[core.Settings, bool]:
-    """文書ごとの設定。無ければ既定値＋表紙・目次の自動候補。(設定, 保存済みか) を返す。"""
+    """文書ごとの設定。無ければ既定値。(設定, 保存済みか) を返す。
+
+    🔴 2026-08-31 まで「設定JSONが無い文書は表紙・目次の自動候補を除外に入れて始める」
+    だったが、ページ除外の適用を廃止したので既定値だけになった（→ core.extract_doc）。
+    """
     p = conf_path(name)
     if p.exists():
         return core.Settings.from_dict(json.loads(p.read_text(encoding="utf-8"))), True
-    st = core.Settings()
-    st.skip_pages = auto_skips(name, get_doc)
-    return st, False
+    return core.Settings(), False
 
 
 # --- キャッシュの有効判定と読み書き ------------------------------------------
@@ -153,9 +147,8 @@ def _rows_head(mtime: float, sig: str) -> bytes:
 def cache_state(name: str) -> str:
     """"ok"＝rows キャッシュが今の設定・PDFと一致 ／ "stale"＝あるが古い ／ "none"＝無い。
 
-    ⚠️ ここは一覧（61冊×毎回）から呼ばれるので、**重い処理をしてはいけない**。
-    設定JSONも自動候補キャッシュも無い文書は、署名が安く計算できないので "stale" 扱い
-    （warm_doc が候補を計算して確かめる）。
+    ⚠️ ここは一覧（61冊×毎回）から呼ばれるので、**重い処理をしてはいけない**
+    （設定JSONの読み込みと署名の計算だけ。PDFは開かない）。
     """
     p = pdf_path(name)
     rows_p = CACHE_DIR / f"{name}.rows.json"
@@ -163,14 +156,7 @@ def cache_state(name: str) -> str:
         return "none"
     mtime = p.stat().st_mtime
     try:
-        if conf_path(name).exists():
-            st, _ = load_settings(name)
-        else:
-            disk = CACHE_DIR / f"{name}.cands.json"
-            if not (disk.exists()
-                    and json.loads(disk.read_text(encoding="utf-8")).get("mtime") == mtime):
-                return "stale"
-            st, _ = load_settings(name)
+        st, _ = load_settings(name)
         sig = rows_sig(st)
         meta_p = CACHE_DIR / f"{name}.meta.json"
         if meta_p.exists():

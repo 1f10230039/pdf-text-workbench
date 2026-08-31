@@ -17,8 +17,7 @@
       変換ログ.csv        … 社ごとの件数・設定の有無
 
 設定について:
-    <データディレクトリ>\\設定\\企業名_年度.json があれば、それを使う。
-    無ければ core.DEFAULTS で走り、**表紙・目次の自動候補だけを除外に入れる**（画面と同じ始め方）。
+    <データディレクトリ>\\設定\\企業名_年度.json があれば、それを使う。無ければ core.DEFAULTS で走る。
     ⚠️ **レイアウトは会社ごとに違うので、新しい会社は画面で一度確認すること。**
     設定JSONは卒論の再現性の材料そのものなので、消さずに残す。
 
@@ -27,7 +26,9 @@
     文 ／ H2（＝ページ）／ H1（＝文書）から選ぶ。→ core.py「集計単位について」
 
 方針:
-    **捨てるのはナビゲーション・フッター・柱と、明示的に除外したページだけ。**
+    **捨てるのは柱（全ページで反復する文言）だけ。**（2026-08-31 ページ除外と
+    ヘッダー・フッターの座標カットの適用を廃止。分母＝総文数・総ページ数は
+    全ページ・全文で数え、冊ごとの人の判断を前処理から排除する）
     それ以外は種別（本文／大／小／極小／表）を付けて全部残す。
     前処理で捨てたものは戻らないが、種別を付けておけば分析のときに選べる。
 
@@ -153,9 +154,9 @@ def main():
         by_kind = collections.Counter(u["種別"] for u in units)
         chars = sum(len(u["文"]) for u in units)
         secs = time.time() - t0
+        # 2026-08-31 ページ除外の廃止：分母は全ページ・全文（除外ページ数・手順の列も撤去）
         log.append({"ファイル": pdf.name, "企業名": company, "年度": year, "群": group,
-                    "ページ数": n_pages, "除外ページ数": len(st.skip_pages),
-                    "手順の未確認": len(core.unfinished(st)),
+                    "ページ数": n_pages,
                     "本文pt": body, "設定": "個別" if has_conf else "既定",
                     "文数": len(units),
                     "抽出単位数": len(l2["units"]),
@@ -166,11 +167,6 @@ def main():
                     "文字数": chars, "秒": round(secs, 1)})
         # ⚠️ 絵文字は Windows のコンソール（cp932）で落ちるので、表示用の文字列には使わない
         mark = "" if has_conf else "  [!] 既定値で変換（画面で確認していない）"
-        # ⚠️ 手順を踏んでいない社は、他社と同じ前処理を受けたと言えない。黙って通さない
-        todo = core.unfinished(st)
-        if todo:
-            mark += "  [!] 手順が未了: " + " / ".join(
-                f"{k}({len(v)})" for k, v in todo.items())
         breakdown = " ".join(f"{k}{by_kind[k]:,}" for k in core.KINDS)
         print(f"{pdf.name}: {n_pages}頁 / 本文{body}pt → {len(units):,}文 "
               f"({breakdown}) / {len(doc_pages):,}ページ / {chars:,}字 "
@@ -221,9 +217,6 @@ def main():
     print(f"→ {TXT_DIR}")
     if any(l["設定"] == "既定" for l in log):
         print("\n[!] 既定値で変換した会社があります。ui/app.py で確認してください。")
-    if any(l["手順の未確認"] for l in log):
-        print("[!] 前処理の手順が未了の会社があります（表紙・目次・章扉 など）。")
-        print("    社間で同じ手順を適用したと言えなくなるので、画面で片付けてください。")
     return 0
 
 

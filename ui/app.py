@@ -8,11 +8,12 @@ PDF→テキスト化を、原本と見比べながら手で詰めるための�
 
 やること:
     ① PDFを開く（アップロード or 卒研データ\\pdf\\ から選ぶ）
-    ② ヘッダー／フッターの境界線をドラッグで決める
+    ② ヘッダー／フッターの境界線をドラッグで決める（自動提案 → 原本を見て確認）
     ③ 本文ptを確認する（サイズ分布を見る）
-    ④ 除外ページを選ぶ（表紙・目次・章扉など。理由は core.TASKS）
-    ⑤ 結合のパラメータを詰める（COL_TOL / LINE_GAP）
-    ⑥ 書き出す（文単位.csv ＋ 設定JSON）
+    ④ 結合のパラメータを詰める（COL_TOL / LINE_GAP）
+    ⑤ 書き出す（文単位.csv ＋ 設定JSON）
+    ※ ページ除外（表紙・目次）は 2026-08-31 に廃止。分母は全ページ・全文で数え、
+      目次などのヒットは L2 の unit_excludes（理由コード付き）で単位側から外す
 
 ⚠️ このファイルには抽出ロジックを書かない。全部 core.py を呼ぶ。
    画面で詰めた設定が、バッチ（pdf2txt.py）でそのまま再現されることを保証するため。
@@ -154,7 +155,7 @@ def out_paths(name: str, label: str = "") -> tuple[Path, Path, Path]:
 
 
 def load_settings(name: str) -> core.Settings:
-    """文書ごとの設定。無ければ既定値＋表紙・目次の自動候補から始める。
+    """文書ごとの設定。無ければ既定値（2026-08-31 に表紙・目次の自動除外を廃止）。
 
     🔴 「無い文書の始め方」はバッチ（pdf2txt.py）と必ず同じにする。ズレると単位の件数が
     食い違ううえ、キャッシュの署名も合わず毎回解析し直しになる（2026-08-25 に実際に起きた）。
@@ -289,14 +290,7 @@ def api_docs():
         row = {"name": p.stem,
                "mb": round(p.stat().st_size / 1024 / 1024, 1),
                "設定済み": conf_path(p.stem).exists()}
-        # 切り取りと除外の点検を済ませたか。確認モードへ入る前の誘導に使う
-        row["点検"] = False
-        if row["設定済み"]:
-            try:
-                cj = json.loads(conf_path(p.stem).read_text(encoding="utf-8"))
-                row["点検"] = bc_complete(cj.get("boundary_check"))
-            except Exception:
-                pass
+        # 「点検」バッジは 2026-08-31 に廃止（切り取りと除外の画面ごと撤去）
         # 抽出単位の数（前回解析時のメタ。→ cachekit.write_meta）。
         # 一覧で「ヒットの無い文書は開かなくてよい」と分かるようにするため
         meta_p = CACHE_DIR / f"{p.stem}.meta.json"
@@ -368,12 +362,9 @@ def _info(name):
         hist = core.size_histogram(doc)      # 全ページ走査。2回目からはキャッシュ
         _hist_cache[name] = (mtime, hist)
     total = sum(n for _, n in hist) or 1
-    # 除外ページの自動候補と推定本文pt（→ cachekit.load_cands。ディスクにキャッシュ）。
-    # 🔴 **設定JSONがまだ無い文書では、表紙・目次の候補をそのまま除外に入れた状態で始める**
-    #    （2026-08-22）。この2つは「外すのが既定」の手順で、60冊を毎回手で外すのは作業の無駄。
-    #    `auto: true` を付けて残すので、「機械の候補をそのまま採った」ことが記録に残る。
-    #    章扉・編集方針・対照表・保証報告書は「見て判断する」手順なので、候補として出すだけ。
-    #    （load_settings が同じ候補を除外に入れて返す）
+    # 推定本文pt（→ cachekit.load_cands。ディスクにキャッシュ）。
+    # 🔴 2026-08-31 ページ除外の適用を廃止：候補（表紙・目次など）は返すが、
+    #    自動で除外に入れることはもうしない（分母は全ページ・全文）。
     cd = cachekit.load_cands(name, lambda: doc)
     body, cands = cd["body0"], cd["cands"]
     return jsonify({
@@ -448,7 +439,7 @@ def api_page(name, pageno):
             "ページ": pageno,
             "ページ表示": core.page_label(page, pageno),
             "本文pt": body,
-            "除外ページ": pageno in st.skip_set(),
+            # 「除外ページ」フラグは 2026-08-31 に廃止（ページ除外は適用されない）
         })
     return jsonify(res)
 
@@ -1069,127 +1060,8 @@ def _units_payload(name: str, kws) -> dict:
             "確認数": sum(1 for u in units if u.get("確認"))}
 
 
-# --- 切り取りと除外（旧「切り取りの点検」。2026-08-27 に専用画面へ） -----------
-#
-# 診断（boundary_scan）は全ページ走査で1冊数秒かかるので、3段で持つ：
-#   メモリ → ディスク（.cache/{名前}.boundary.json）→ 再計算
-# ディスクに残すのは、画面を開き直す・サーバーを立ち上げ直すたびに
-# 61冊×数秒を待たされないため。署名（PDFのmtime＋境界の設定＋検索語）が合えば有効。
-_boundary_cache: dict[tuple, dict] = {}
-
-# 点検完了の条件：フッター・ヘッダー・ページの3つとも判断が記録されていること。
-# 2026-08-26 以前の旧形式（"判断" 1本）も完了と数える（例：D社の2冊）
-BC_KEYS = ("フッター", "ヘッダー", "ページ")
-
-
-def bc_complete(bc) -> bool:
-    if not bc or not isinstance(bc, dict):
-        return False
-    return "判断" in bc or all(k in bc for k in BC_KEYS)
-
-
-def _boundary_sig(name: str, st: core.Settings, kws) -> str:
-    mtime = (PDF_DIR / f"{name}.pdf").stat().st_mtime
-    return json.dumps({
-        # v は診断結果の**形**を変えたら上げる（古いディスクキャッシュを黙って使わないため）。
-        # v2: 寸法を全ページ分に（ビューアが全ページを描く。2026-08-27 夕方）
-        "v": 2,
-        "mtime": mtime, "header_y": st.header_y, "footer_margin": st.footer_margin,
-        "skip": sorted([int(r["page"]), r.get("reason") or ""]
-                       for r in st.skip_pages or []),
-        "kws": list(kws or []),
-    }, ensure_ascii=False, sort_keys=True)
-
-
-def _boundary_read_disk(name: str, sig: str) -> dict | None:
-    p = CACHE_DIR / f"{name}.boundary.json"
-    if not p.exists():
-        return None
-    try:
-        d = json.loads(p.read_text(encoding="utf-8"))
-        if d.get("sig") == sig:
-            return d["scan"]
-    except Exception:
-        pass
-    return None
-
-
-def _boundary_scan_cached(name: str, st: core.Settings, kws) -> dict:
-    sig = _boundary_sig(name, st, kws)
-    hit = _boundary_cache.get((name, sig))
-    if hit is None:
-        hit = _boundary_read_disk(name, sig)
-    if hit is None:
-        with _pdf_lock:
-            hit = core.boundary_scan(get_doc(name), st, kws)
-        try:
-            CACHE_DIR.mkdir(parents=True, exist_ok=True)
-            (CACHE_DIR / f"{name}.boundary.json").write_text(
-                json.dumps({"sig": sig, "scan": hit}, ensure_ascii=False),
-                encoding="utf-8")
-        except Exception:
-            pass
-    if len(_boundary_cache) > 300:
-        _boundary_cache.clear()
-    _boundary_cache[(name, sig)] = hit
-    return hit
-
-
-def _boundary_payload(name: str, kws) -> dict:
-    """「切り取りと除外」1文書ぶん：診断の全行＋除外ページの候補＋判断の記録。"""
-    st = load_settings(name)
-    out = dict(_boundary_scan_cached(name, st, kws))
-    out["name"] = name
-    out["判断"] = st.boundary_check or None
-    # 除外ページ（③）：候補は cachekit の全候補キャッシュから（追加の走査なし）。
-    # 表紙・目次に絞るのは本人の方針（2026-08-27。小扉・対照表は必要になったら）
-    try:
-        cands = cachekit.load_cands(name, lambda: get_doc(name))["cands"]
-    except Exception:
-        cands = []
-    out["除外候補"] = [c for c in cands if c["reason"] in ("表紙", "目次")]
-    out["除外済み"] = st.skip_pages or []
-    out["設定"] = {"header_y": st.header_y, "footer_margin": st.footer_margin}
-    return out
-
-
-def _boundary_summary(name: str, kws) -> dict:
-    """一覧1行ぶん（軽量）。診断がキャッシュにあれば件数だけ添える。無ければ走査しない。"""
-    st = load_settings(name)
-    row = {"name": name, "判断": st.boundary_check or None,
-           "完了": bc_complete(st.boundary_check)}
-    sig = _boundary_sig(name, st, kws)
-    scan = _boundary_cache.get((name, sig)) or _boundary_read_disk(name, sig)
-    if scan is not None:
-        _boundary_cache[(name, sig)] = scan
-        for side in ("footer", "header"):
-            s = scan.get(side) or {}
-            row[side] = {k: s.get(k) for k in
-                         ("現在", "件数", "検索語入り", "提案", "干渉")}
-        row["診断済み"] = True
-    else:
-        row["診断済み"] = False
-    return row
-
-
-@app.get("/api/prep")
-def api_prep():
-    """「切り取りと除外」の一覧。ディスクキャッシュだけ見るので一瞬で返る。
-
-    診断がまだの冊は「診断済み: false」で返す。画面はそれを見て
-    ジョブ（kind=boundary）を1回走らせ、もう一度ここを呼ぶ。
-    """
-    kws = load_keywords()
-    rows = [_boundary_summary(p.stem, kws) for p in sorted(PDF_DIR.glob("*.pdf"))]
-    return jsonify({"docs": rows, "検索語": kws})
-
-
-@app.get("/api/boundary/<name>")
-def api_boundary(name):
-    """1冊ぶんの診断（アコーディオンを開いたときに呼ぶ）。キャッシュ済みなら一瞬。"""
-    if not (PDF_DIR / f"{name}.pdf").exists():
-        return jsonify({"error": "無い文書です"}), 404
-    return jsonify(_boundary_payload(name, load_keywords()))
+# 🔴 「切り取りと除外」（境界の診断・自動提案・点検の記録）は 2026-08-31 に
+#    座標カットの廃止とともに削除した。経緯は 記録/2026-08-31.md と git 履歴。
 
 
 def _table_rows(names: list[str], kws, upd, errors: dict | None = None) -> list[dict]:
@@ -1260,24 +1132,12 @@ def _run_job(kind: str, params: dict):
         names = [n for n in names if (PDF_DIR / f"{n}.pdf").exists()]
         kws = params.get("keywords")
 
-        # どのジョブも、まずキャッシュを揃える（未解析があるときだけ時間がかかる）。
-        # ⚠️ 切り取りと除外（boundary）だけは行キャッシュを使わないので温めない（軽く走らせる）
-        errors = {} if kind == "boundary" else _warm_names(names, upd)
+        # どのジョブも、まずキャッシュを揃える（未解析があるときだけ時間がかかる）
+        errors = _warm_names(names, upd)
         result: dict = {}
 
         if kind == "warm":
             result = {"冊数": len(names)}
-        elif kind == "boundary":
-            upd(add_total=len(names))
-            docs = []
-            for i, n in enumerate(names, 1):
-                upd(step="ヘッダー・フッターに巻き込まれた行を全ページから探しています",
-                    detail=f"{i}/{len(names)}冊：{n}", add_done=1)
-                try:
-                    docs.append(_boundary_payload(n, kws or load_keywords()))
-                except Exception as e:
-                    errors[n] = f"{type(e).__name__}: {e}"
-            result = {"docs": docs}
         elif kind == "units_all":
             upd(add_total=len(names))
             docs = []
@@ -1300,6 +1160,46 @@ def _run_job(kind: str, params: dict):
         elif kind == "export_all":
             upd(add_total=len(names) + 5)
             result = _export_all(params.get("group_by") or None, kws, upd, errors)
+        elif kind == "rates":
+            # 出現率（RQ1 の材料）：冊ごとの 総文数・ヒット文数・総ページ数・ヒットページ数と率。
+            # 🔴 分子・分母とも L1 の機械的検出＝確認モードの手作業（unit_excludes 等）は
+            #    影響しない（手作業で率が動くと、率の比較が手続きに依存してしまう。
+            #    → 検討_2026-08-25_抽出単位方式.md §1「RQ1 は L1 で数える」）。
+            #    絶対数と率の両方を出すのは、どちらで見ても結論が変わらないことを確認するため
+            upd(add_total=len(names))
+            groups = _load_groups()
+            rx = core.keyword_regex(kws or load_keywords())
+            out_rows = []
+            for i, n in enumerate(names, 1):
+                upd(step="② 文とページを数えています", detail=f"{i}/{len(names)}冊：{n}",
+                    add_done=1)
+                try:
+                    st = load_settings(n)
+                    rows = doc_rows(n, st)
+                    with pymupdf.open(PDF_DIR / f"{n}.pdf") as d:
+                        npages = d.page_count
+                except Exception as e:
+                    errors[n] = f"{type(e).__name__}: {e}"
+                    continue
+                company, year = _parse_name(n)
+                hits = [r for r in rows if rx.search(r["文"])]
+                hitpages = {r["ページ"] for r in hits}
+                out_rows.append({
+                    "文書": n, "企業名": company, "年度": year, "群": groups.get(n, ""),
+                    "総文数": len(rows), "ヒット文数": len(hits),
+                    "文出現率%": round(len(hits) / len(rows) * 100, 3) if rows else 0.0,
+                    "総ページ数": npages, "ヒットページ数": len(hitpages),
+                    "ページ出現率%": round(len(hitpages) / npages * 100, 2) if npages else 0.0,
+                })
+            csv_p = DATA / "出現率.csv"
+            cols = ["文書", "企業名", "年度", "群", "総文数", "ヒット文数", "文出現率%",
+                    "総ページ数", "ヒットページ数", "ページ出現率%"]
+            with csv_p.open("w", encoding="utf-8-sig", newline="") as f:
+                w = csv.DictWriter(f, fieldnames=cols)
+                w.writeheader()
+                w.writerows(out_rows)
+            result = {"cols": cols, "rows": out_rows, "csv": str(csv_p),
+                      "検索語": kws or load_keywords()}
         else:
             raise ValueError(f"知らないジョブ: {kind}")
 
@@ -1317,7 +1217,7 @@ def api_job_start():
     global _job
     body = request.get_json(silent=True) or {}
     kind = body.get("kind")
-    if kind not in ("warm", "units_all", "table", "export_all", "boundary"):
+    if kind not in ("warm", "units_all", "table", "export_all", "rates"):
         return jsonify({"error": f"kind が不正です: {kind}"}), 400
     if kind == "export_all":
         gb = body.get("group_by")

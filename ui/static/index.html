@@ -70,9 +70,7 @@
       <span class="pageno"><input type="number" id="pageNo" value="1" min="1"><span class="of">/ <span id="pageMax"></span></span></span>
       <button id="next" class="ghost icon" title="次のページへ（→ キー）"><svg class="ic"><use href="#i-chev-r"/></svg></button>
       <span class="label" id="pageLabel" title="印刷上のページ番号"></span>
-      <span class="sep"></span>
-      <label class="chk"><input type="checkbox" id="skipThis"> このページを除外</label>
-      <select id="skipReason" class="reason" hidden title="なぜ外すのか。設定JSONに残り、卒論の付録になります"></select>
+      <!-- 「このページを除外」は 2026-08-31 に撤去（ページ除外の廃止。分母は全ページ・全文） -->
       <span id="busy" hidden>解析中</span>
     </div>
     <div class="tb-right">
@@ -102,36 +100,44 @@
   </div>
 </header>
 
-<!-- ===== ① PDFを選ぶ ===== -->
+<!-- ===== ① ホーム（文書一覧と入口） ===== -->
 <section id="pane-open" class="open-pane">
   <div class="open-main">
     <div class="open-head">
-      <h2>PDFを選ぶ</h2>
+      <h2>文書の一覧</h2>
       <input id="docFilter" class="search" placeholder="企業名や年度で絞り込む…">
-      <button id="bdBtn" title="ヘッダー・フッターの境界と、除外ページ（表紙・目次）を原本を見ながら1冊ずつ決めます。確認モードの前に全冊"><svg class="ic"><use href="#i-scissors"/></svg><span id="bdBtnLabel">切り取りと除外</span></button>
+      <button id="ratesBtn" class="ghost" title="RQ1の材料：冊ごとの 総文数・ヒット文数・総ページ数・ヒットページ数と出現率（絶対数と率の両方）。分子・分母とも機械的検出＝確認モードの手作業は影響しません。出現率.csv にも書き出します"><svg class="ic"><use href="#i-list"/></svg>出現率</button>
       <button id="auditBtn" class="primary" title="選んだ文書（未選択なら全部）の生成AI関連語のヒット箇所を、1件ずつ順に確認します"><svg class="ic"><use href="#i-gather"/></svg><span id="auditBtnLabel">ヒットを確認（全冊）</span></button>
+    </div>
+    <!-- 進み具合と「次にやること」。何をすればいいかが一目で分かるように（2026-08-31 追加） -->
+    <div id="homeProg" class="home-prog" hidden>
+      <span id="hpMain"></span>
+      <div class="audit-bar home-bar"><div id="hpFill"></div></div>
+      <span id="hpNext" class="hp-next"></span>
     </div>
     <div class="open-selbar">
       <button id="selAll" class="ghost mini">すべて選ぶ</button>
       <button id="selNone" class="ghost mini">選択を外す</button>
       <span id="selCount" class="hint"></span>
       <span class="spacer"></span>
-      <span class="hint">クリックで選択（複数可）。個別に直すときだけ行末の「開く」</span>
+      <span class="hint">行のクリック＝対象の選択（複数可）。文書の中を直すときだけ行末の「開く」</span>
     </div>
     <ul id="docList" class="doclist"></ul>
   </div>
   <aside class="open-side">
     <div class="card steps">
-      <h3><svg class="ic"><use href="#i-sparkle"/></svg>いまの流れ（抽出単位方式）</h3>
+      <h3><svg class="ic"><use href="#i-sparkle"/></svg>やることは3つ</h3>
       <ol>
-        <li>まず<b>切り取りと除外</b> — ヘッダー・フッターの境界が本文を巻き込んでいないかを原本で確かめ、除外ページ（表紙・目次）と一緒に1冊ずつ決めます（フッターに巻き込まれて文が途中で切れていた実例あり）</li>
-        <li>文書を選んで<b>ヒットを確認</b>（確認モード）— 生成AI関連語のヒット箇所を1件ずつ ✓ で確認します。原本では検索語そのものが光ります</li>
-        <li>直したい箇所はカードの上でそのまま直せます — 文を<b>足す・繋ぐ・除外</b>（理由つき。全部JSONに残ります）。表の範囲やページ除外だけ「開いて直す」</li>
-        <li>確認が済んだら<b>全冊書き出し</b> → <code>KHCoder_抽出単位.xlsx</code>（年・企業・群で分割もできます）</li>
-        <li>KH Coder：新規プロジェクト → 列「テキスト」→ 強制抽出語 → 前処理 → 共起ネットワーク（単位H5）</li>
+        <li><b>ヒットを確認</b>（上の青いボタン）— 生成AI関連語のヒットを1件ずつ、原本と前後の文脈を見て
+          <b>✓</b>（Enterでも進めます）。目次・ページ番号などが混ざっていたら、その場で<b>理由を選んで外す</b></li>
+        <li>ぜんぶ ✓ になったら、確認モード右上の<b>全冊書き出し</b> →
+          <code>KHCoder_抽出単位.xlsx</code>（年・企業・群での分割も選べます）</li>
+        <li><b>KH Coder</b>：新規プロジェクト → 列「テキスト」→ 強制抽出語 → 前処理 →
+          共起ネットワーク（集計単位 H5）</li>
       </ol>
-      <p class="note">出現率の分母になる全文データ（L1）は <code>pdf2txt.py</code> が既定値で一括生成します。
-        手作業はぜんぶ設定JSONに残り、同じ入力から同じ出力が再現されます＝卒論の<b>再現性と監査の材料</b>です。</p>
+      <p class="note">出現率（冊ごとのヒット文数・総文数と率＝RQ1の材料）は上の<b>出現率</b>ボタンから。<br>
+        前処理は<b>柱（全ページで反復する文言）の除去だけ</b>＝冊ごとの判断はありません。
+        手作業はすべて設定JSONに残り、同じ入力から同じ出力が再現されます（卒論の再現性と監査の材料）。</p>
     </div>
     <div class="card">
       <h3><svg class="ic"><use href="#i-plus"/></svg>新しいPDFを追加</h3>
@@ -173,41 +179,8 @@
   </div>
 </section>
 
-<!-- ===== 切り取りと除外（旧「切り取りの点検」。2026-08-27 に専用画面へ） =====
-     ヘッダー／フッターの境界と、除外ページ（表紙・目次）を、原本を見ながら1冊ずつ決める。
-     未チェック／チェック済みの2タブ。3つの判断（フッター・ヘッダー・ページ）が揃うと
-     自動でチェック済みへ移る。判断は設定JSONの boundary_check に残る -->
-<section id="prep" hidden>
-  <div class="audit-top">
-    <button id="prepBack" class="ghost"><svg class="ic"><use href="#i-back"/></svg>一覧へ戻る</button>
-    <b><svg class="ic"><use href="#i-scissors"/></svg>切り取りと除外</b>
-    <span class="prep-count" id="prepCount" title="3つの判断（フッター・ヘッダー・除外ページ）が揃った冊の数"></span>
-    <div class="audit-bar prep-bar"><div id="prepBarFill"></div></div>
-    <span class="spacer"></span>
-    <button id="prepHelp" class="ghost mini" title="この画面でできること"><svg class="ic"><use href="#i-help"/></svg>使い方</button>
-    <button id="prepRebuild" class="primary mini" title="余白や除外ページを変えた冊の解析キャッシュを、新しい設定で作り直します"><svg class="ic"><use href="#i-gear"/></svg><span id="prepRebuildLabel">解析を作り直す</span></button>
-  </div>
-  <!-- 冊の一覧（2タブ） -->
-  <div id="prepHome">
-    <div class="prep-tabs">
-      <div class="seg prep-seg">
-        <button id="prepTabTodo" class="on">未チェック <span id="prepCntTodo" class="cnt"></span></button>
-        <button id="prepTabDone">チェック済み <span id="prepCntDone" class="cnt"></span></button>
-      </div>
-      <span id="prepOrder" class="hint"></span>
-    </div>
-    <div id="prepList"></div>
-  </div>
-  <!-- 1冊の作業ビュー：左＝判断パネル／右＝原本ビューア（画面いっぱい） -->
-  <div id="prepWork" hidden>
-    <div class="ppw-top">
-      <button id="ppwBack" class="ghost mini"><svg class="ic"><use href="#i-back"/></svg>冊の一覧</button>
-      <b id="ppwName"></b>
-      <span id="ppwChips" class="pp-decs"></span>
-    </div>
-    <div id="ppwMain"></div>
-  </div>
-</section>
+<!-- 「切り取りと除外」の画面は 2026-08-31 に座標カットの廃止とともに撤去した
+     （→ 記録/2026-08-31.md、git 履歴） -->
 
 <!-- 読み込み中（時間のかかる処理は進捗バー＋「いま何をしているか」を出す） -->
 <div id="loading" hidden>
@@ -244,7 +217,7 @@
       <button data-tab="units" id="unitBadge" title="生成AI関連語のヒット箇所を、規則で単位化して確認する（U キー）"><svg class="ic"><use href="#i-gather"/></svg><span>抽出</span></button>
       <button data-tab="pages" id="thumbBtn" title="ページのサムネイル（T キー）"><svg class="ic"><use href="#i-pages"/></svg><span>ページ</span></button>
       <button data-tab="ctx" id="ctxBadge" title="「生成AI」などの語を含む文と、その前後の文（F キー）"><svg class="ic"><use href="#i-search"/></svg><span>文脈窓</span></button>
-      <button data-tab="record" id="manBadge" title="手順の進み具合と、手で直した箇所"><svg class="ic"><use href="#i-clip"/></svg><span>記録</span><span class="cnt" id="manCnt"></span></button>
+      <button data-tab="record" id="manBadge" title="手で直した箇所"><svg class="ic"><use href="#i-clip"/></svg><span>記録</span><span class="cnt" id="manCnt"></span></button>
       <button data-tab="settings" id="cfgBtn" title="抽出の設定（既定値で足りないときだけ）"><svg class="ic"><use href="#i-gear"/></svg><span>設定</span></button>
     </nav>
 
@@ -254,15 +227,14 @@
     <!-- 設定。最初に1回詰めるだけ。上から順に -->
     <section id="drawer" class="sbpane" hidden>
       <section class="cfg">
-        <h3><span class="step">1</span>ヘッダーとフッターを切る</h3>
+        <h3><span class="step">1</span>柱（反復する文言）を落とす</h3>
         <div class="row2">
-          <label class="param">HEADER_Y <input type="number" step="1" id="p_header_y"></label>
-          <label class="param">FOOTER_MARGIN <input type="number" step="1" id="p_footer_margin"></label>
           <label class="param">柱の割合 <input type="number" step="0.05" min="0" max="1" id="p_repeat_ratio"></label>
         </div>
-        <p class="note">全ページで同じ位置にあるナビゲーションとページ番号を、上下の線で落とします。ページ画像の<b>青い線をドラッグ</b>しても動きます。
-          <b>柱の割合</b>：全ページのこの割合以上で同じ位置に同じ文言が出る行は、線の位置に関係なく落とします（<code>0</code> で無効）。
-          落とした行は<b>赤い破線</b>で出ます。</p>
+        <p class="note">全ページのこの割合以上で「同じ位置に同じ文言」が出る行を柱（ナビ・ランニングヘッド・タイトル入りフッター）として落とします（<code>0</code> で無効）。
+          落とした行は<b>赤い破線</b>で出ます。これが唯一の「捨てる」規則です
+          （ヘッダー・フッターの座標カットは 2026-08-31 に廃止。反復しない番号・章名が
+          ヒットに混ざったときは、確認モードで「ヘッダー／フッターのため除外」を選びます）。</p>
       </section>
       <section class="cfg">
         <h3><span class="step">2</span>本文の文字サイズ</h3>
@@ -305,9 +277,9 @@
           <b>表</b>：罫線で区切られた表を 1行＝1ブロック に組み直します。図解の枠線を表と誤認したページは右の一覧の上で検出を切れます。</p>
       </section>
       <section class="cfg">
-        <h3><span class="step">5</span>除外するページ <button class="mini ghost" id="loadPages">一覧を読む</button></h3>
-        <p class="note"><span class="hint" id="skipCount"></span>
-          <b>Shift+クリック</b>で除外の切り替え、ふつうのクリックでそのページへ。外したら<b>理由を付けてください</b>（理由が無いものは「記録」に出ます）。</p>
+        <h3><span class="step">5</span>ページ一覧 <button class="mini ghost" id="loadPages">一覧を読む</button></h3>
+        <p class="note">クリックでそのページへ飛べます（下線＝表のあるページ）。
+          ページ除外は 2026-08-31 に廃止しました。分母は全ページ・全文で数えます。</p>
         <div id="pageList" class="pagelist"></div>
       </section>
       <div class="drawer-foot">
@@ -317,7 +289,7 @@
       </div>
     </section>
 
-    <!-- 記録（手順・手を入れた箇所） -->
+    <!-- 記録（手を入れた箇所。手順チェックリストは 2026-08-31 に撤去） -->
     <section id="taskPane" class="sbpane" hidden>
       <p class="hint narrowonly tp-narrow">画面の幅が足りないので、右の文の一覧を畳んでいます。</p>
       <p class="hint sb-sub" id="taskCount"></p>

@@ -558,7 +558,22 @@ a.dl:hover{filter:brightness(1.08)}
 .doclist .tag.dim{color:var(--label2);border-color:var(--sep)}
 .doclist .tag.zero{color:var(--label2);border-color:var(--label3,var(--sep))}
 .doclist .tag.hit{color:var(--teal);border-color:var(--teal);font-weight:700}
+.doclist .tag.hit.done{color:var(--green);border-color:var(--green);display:inline-flex;align-items:center;gap:3px}
+.doclist .tag.hit.done .ic{width:12px;height:12px}
 .doclist .tag.warn{color:var(--amber);border-color:var(--amber)}
+
+/* ホームの進み具合（ヒット単位の消化状況と「次にやること」。2026-08-31 追加） */
+.home-prog{display:flex;align-items:center;gap:14px;flex-wrap:wrap;background:var(--panel);border:1px solid var(--sep2);border-radius:var(--r-card);box-shadow:var(--shadow-sm);padding:10px 16px;font-size:13px}
+.home-prog .home-bar{flex:1 1 160px}
+.home-prog #hpFill{height:100%;background:var(--accent);border-radius:999px;transition:width .3s ease}
+.home-prog .hp-next{color:var(--label2);font-size:12px}
+
+/* 出現率の表（→ showRates。数字の列は右揃え・等幅数字） */
+.xtable.ratesbox{max-height:60vh}
+.xtable.ratesbox td:nth-child(n+5),.xtable.ratesbox th:nth-child(n+5){text-align:right;font-variant-numeric:tabular-nums}
+/* ヒット0の冊＝分母としてだけ効く行。xtable の off（打ち消し線）は除外の意味なので上書きする */
+.xtable.ratesbox tr.off td{text-decoration:none;background:transparent;color:var(--label2)}
+.xtable.ratesbox tr.total td{font-weight:700;border-top:2px solid var(--sep)}
 
 #audit{flex:1;min-height:0;display:flex;flex-direction:column;animation:fade .2s ease-out}
 .audit-top{display:flex;align-items:center;gap:12px;padding:10px 16px;border-bottom:1px solid var(--sep2);background:var(--panel);flex-wrap:wrap}

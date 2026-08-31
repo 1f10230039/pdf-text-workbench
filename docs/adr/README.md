@@ -13,3 +13,4 @@
 | [0006](0006-two-layers.md) | 抽出を 2 層（L1 全文層 / L2 抽出層）に分離する | Accepted |
 | [0007](0007-pymupdf-lock.md) | PyMuPDF の呼び出しをグローバルロックで直列化する | Accepted |
 | [0008](0008-records-out-of-cache-signature.md) | 人の判断の「記録」はキャッシュ署名に含めない | Accepted |
+| [0009](0009-no-margin-cut.md) | 座標によるヘッダー/フッターの切り取りとページ除外を廃止する | Accepted |

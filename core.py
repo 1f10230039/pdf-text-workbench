@@ -11,8 +11,12 @@ UIで詰めた設定が、そのままバッチで再現されないと意味が
 2026-08-08 に pdf2txt.py から切り出し。同時に足したもの：
   ・ページ番号／ページラベル（印刷上の番号。get_label() が返す）
   ・セクション（直近の大見出しを引き継ぐ）
-  ・ページ単位の除外（skip_pages）
   ・設定を Settings にまとめ、文書ごとに JSON で保存できる形にした
+
+🔴 2026-08-31 前処理を大幅に簡素化：ページ除外（skip_pages）と座標カット
+   （header_y / footer_margin）の適用を廃止。捨てるのは反復行（repeated_lines）だけ。
+   ヒットに混ざった柱・番号は L2 の unit_excludes（理由コード付き）で単位側から外す。
+   → 記録/2026-08-31.md
 """
 from __future__ import annotations
 
@@ -28,11 +32,15 @@ import pymupdf
 # しくみ.md「4. パラメータ一覧」の値。A社 SR 2025 で目視して決めたもの。
 # ⚠️ 会社ごとにレイアウトが違うので、これは「出発点」であって正解ではない。
 DEFAULTS = {
-    "header_y": 35.0,       # これより上の行はページ上部のナビゲーションとみなして捨てる
+    # 🔴 2026-08-31 `header_y`・`footer_margin`（座標でヘッダー・フッターを切る）を廃止。
+    #    ページ番号と同じ高さに本文が回り込む冊（R社）があり、値では分けられず
+    #    冊ごとの判断が必須になるため。切らずに全部残し、ヒットに柱・番号が混ざったときは
+    #    L2 の unit_excludes（理由：ヘッダー／フッター）で単位側から外す。
+    #    実測（61冊・診断キャッシュ）：廃止で新たに入る 15,901 行に検索語入りは 0 件
     # 全ページのこの割合以上で「同じ位置に同じ文言」が現れる行は柱（ランニングヘッド・ナビ・
-    # 社名入りフッター）とみなして捨てる（2026-08-22 追加。0で無効。→ repeated_lines）
+    # 社名入りフッター）とみなして捨てる（2026-08-22 追加。0で無効。→ repeated_lines）。
+    # これが唯一の「捨てる」規則（冊ごとの判断ゼロ・全冊一律）
     "repeat_ratio": 0.3,
-    "footer_margin": 45.0,  # ページ下端からこの範囲はフッターとみなして捨てる
     "size_tol": 0.6,        # 本文フォントサイズからの許容差(pt)。この範囲を「本文」とする
     "tiny_ratio": 0.5,      # 本文ptに対するこの比より小さい文字は「極小」とする（0で無効）
     "col_tol": 12.0,        # 同じ列とみなす x座標の差(pt)
@@ -169,8 +177,8 @@ OP_REASONS = {
         {"key": "参照表記", "label": "参照・リンク表記（「詳しくはP.○○」など）",
          "note": "本文への案内であって、記述そのものではない"},
         {"key": "ロゴ商標", "label": "ロゴ・商標・意匠の文字"},
-        {"key": "ページ表記", "label": "ページ番号・柱（座標で切れなかったもの）",
-         "note": "多いときは HEADER_Y / FOOTER_MARGIN のほうを疑う"},
+        {"key": "ページ表記", "label": "ページ番号・柱（反復除去で落ちなかったもの）",
+         "note": "座標カットは 2026-08-31 に廃止。短い番号は min_len でも落ちる"},
         {"key": "図表の断片", "label": "図表の目盛り・単位・記号だけの断片",
          "note": "『t-CO2e』『MWh』のような、語として意味を成さないもの"},
         {"key": "二重描画", "label": "二重描画の取りこぼし",
@@ -207,6 +215,22 @@ OP_REASONS = {
          "note": "図解のラベルがバラけたもの（「エージェントAI生成AI生成AI。」など）"},
         {"key": "柱の取り残し", "label": "柱・ナビの取り残し",
          "note": "自動の柱除去で落ちなかった、毎ページ繰り返す行"},
+        # 2026-08-31 ページ除外の廃止に伴い追加：構成要素のページに出たヒットは
+        # ページごとではなく**その単位だけ**を理由付きで外す
+        {"key": "目次", "label": "目次の項目",
+         "note": "目次ページの見出し＋ページ番号の羅列。本文の章題の再掲であって内容の記述でない"},
+        {"key": "表紙", "label": "表紙・裏表紙の文言",
+         "note": "タイトル・社名など、文書の外装であって内容の記述でない"},
+        {"key": "章扉", "label": "章扉の章題・ナビ",
+         "note": "章の扉ページの章題や一覧。⚠️ リード文・KPIが載っている場合は内容なので残す"},
+        {"key": "対照表", "label": "対照表・索引の項目",
+         "note": "GRI対照表・内容索引などの、本文への参照行。内容の記述でない"},
+        # 2026-08-31 座標カット（header_y / footer_margin）の廃止に伴い追加：
+        # ヘッダー・フッター帯の行は切らずに残すので、ヒットに混ざったらここで外す
+        {"key": "ヘッダー", "label": "ヘッダーのため除外（章名ナビ・柱）",
+         "note": "ページ上部の章名ナビ・ランニングヘッド。反復除去で落ちなかったもの"},
+        {"key": "フッター", "label": "フッターのため除外（ページ番号・欄外）",
+         "note": "ページ下部の番号・欄外表記。反復除去で落ちなかったもの"},
     ],
     # 抽出単位（L2）に足した文
     "unit_merges": [
@@ -428,10 +452,12 @@ class KindOverride:
 
 @dataclass
 class Settings:
-    """1文書ぶんの抽出設定。そのまま JSON にして保存する（＝卒論の再現性の材料）。"""
-    header_y: float = DEFAULTS["header_y"]
+    """1文書ぶんの抽出設定。そのまま JSON にして保存する（＝卒論の再現性の材料）。
+
+    🔴 2026-08-31 `header_y`・`footer_margin` を廃止（座標カットをやめた。→ DEFAULTS の注記）。
+       古い設定JSONに残っている値は from_dict が読み飛ばす。
+    """
     repeat_ratio: float = DEFAULTS["repeat_ratio"]
-    footer_margin: float = DEFAULTS["footer_margin"]
     size_tol: float = DEFAULTS["size_tol"]
     tiny_ratio: float = DEFAULTS["tiny_ratio"]
     col_tol: float = DEFAULTS["col_tol"]
@@ -546,19 +572,14 @@ def task_status(st: Settings) -> list[dict]:
 
 
 def unfinished(st: Settings) -> dict:
-    """書き出す前に知らせるべきこと。空の dict なら手順は片付いている。"""
-    rows = task_status(st)
-    out = {}
-    must = [r["label"] for r in rows if r["must"] and r["state"] == "未確認"]
-    other = [r["label"] for r in rows if not r["must"] and r["state"] == "未確認"]
-    noreason = sorted(p for p, reason in st.skip_map().items() if not reason)
-    if must:
-        out["未確認（既定で外す手順）"] = must
-    if other:
-        out["未確認（判断が要る手順）"] = other
-    if noreason:
-        out["理由が未設定の除外ページ"] = noreason
-    return out
+    """書き出す前に知らせるべきこと。空の dict なら手順は片付いている。
+
+    🔴 2026-08-31 ページ除外の廃止に伴い、手順チェックリスト（TASKS）は引退した。
+    分母は全ページ・全文なので「外すべきページを外したか」という問い自体が無くなり、
+    催促するとむしろ廃止済みの作業へ誘導してしまう。task_status / TASKS は
+    **過去の設定JSONを付録として読むため**に残してある。
+    """
+    return {}
 
 
 # --- 本文サイズの推定 ---------------------------------------------------
@@ -592,12 +613,12 @@ def detect_body_size(doc) -> float:
 # --- 1ページぶんの処理 --------------------------------------------------
 
 # --- 柱（全ページで同じ位置に同じ文言）を捨てる（2026-08-22 追加） ------------------
-# ヘッダー／フッターは y 座標で切れるが、**ページの右端に毎ページ並ぶナビゲーション**
-# （P社 2024：章名のリストが全ページ右端に出る＝1ページ36単位×190ページ）や、
-# `HEADER_Y` より少し下にある柱は y だけでは切れない。
-# → **「全ページの3割以上で、同じ x（±3pt）に同じ文言」が現れる行**を柱とみなして捨てる。
-#   文書ごとに1回数えるだけの機械的な規則。章名の見出しは章の中でしか繰り返さない（3割未満）。
-#   割合は `repeat_ratio`（既定 0.3。0 で無効）。少なくとも5ページに現れることも条件にする。
+# **「全ページの3割以上で、同じ x（±3pt）に同じ文言」が現れる行**を柱とみなして捨てる。
+# 例：P社 2024 のページ右端の章名ナビ（1ページ36単位×190ページ）、タイトル入りフッター。
+# 文書ごとに1回数えるだけの機械的な規則。章名の見出しは章の中でしか繰り返さない（3割未満）。
+# 割合は `repeat_ratio`（既定 0.3。0 で無効）。少なくとも5ページに現れることも条件にする。
+# 🔴 2026-08-31 座標カットの廃止後は、これが**唯一の「捨てる」規則**（冊ごとの判断ゼロ）。
+#    反復しない番号・章名がヒットに混ざったときは L2 の unit_excludes（ヘッダー／フッター）で外す
 _repeat_cache: dict[tuple, frozenset] = {}
 
 
@@ -638,11 +659,11 @@ def repeated_lines(doc, st: Settings) -> frozenset:
 def collect_lines(page, st: Settings, repeats: frozenset | None = None) -> list[dict]:
     """1ページ分の行を座標・サイズ付きで集める。
 
-    ヘッダー・フッター・柱も**捨てずに dropped 印を付けて返す**。
+    柱（反復行）も**捨てずに dropped 印を付けて返す**。
     UI で「今どこが切り落とされているか」を見せるため。バッチ側で dropped を除く。
     `repeats` は `repeated_lines(doc, st)` の結果（None なら柱の判定をしない）。
+    🔴 2026-08-31 座標カット（header_y / footer_margin）を廃止：捨てるのは反復だけ。
     """
-    h = page.rect.height
     out = []
     for blk in page.get_text("dict")["blocks"]:      # sortは付けない（段組みが崩れる）
         for ln in blk.get("lines", []):
@@ -650,13 +671,7 @@ def collect_lines(page, st: Settings, repeats: frozenset | None = None) -> list[
             text = "".join(sp["text"] for sp in ln["spans"])
             if not text.strip():
                 continue
-            dropped = None
-            if y0 < st.header_y:
-                dropped = "header"
-            elif y1 > h - st.footer_margin:
-                dropped = "footer"
-            elif repeats and _line_key(text, x0, y0) in repeats:
-                dropped = "repeat"
+            dropped = "repeat" if (repeats and _line_key(text, x0, y0) in repeats) else None
             out.append({"x0": x0, "y0": y0, "x1": x1, "y1": y1,
                         "size": _line_size(ln["spans"]),
                         "text": text, "dropped": dropped,
@@ -1610,7 +1625,9 @@ def extract_doc(doc, st: Settings, body: float | None = None) -> list[dict]:
     """
     if body is None:
         body = st.body_size if st.body_size else detect_body_size(doc)
-    skip = st.skip_set()
+    # 🔴 2026-08-31 ページ除外（skip_pages）の適用を廃止：分母（総文数・総ページ数）は
+    #    **全ページ・全文**で数える＝人の判断を分母から排除する。表紙・目次などにヒットが
+    #    出た場合は L2 の unit_excludes（理由コード付き）で単位側から外す
     ex, ko = st.excluder(), st.kind_override()
 
     rows, section = [], ""
@@ -1620,9 +1637,6 @@ def extract_doc(doc, st: Settings, body: float | None = None) -> list[dict]:
     carry: tuple[dict, int] | None = None
     for i, page in enumerate(doc):
         pageno = i + 1                       # 人間が数える番号（1始まり）
-        if pageno in skip:
-            carry = None                     # 除外ページ（章扉など）をまたいでは繋がない
-            continue
         label = page_label(page, pageno)          # 印刷上のページ番号
         res = analyze_page(page, st, body, pageno, ex, ko)
         groups = res["groups"]
@@ -1981,126 +1995,8 @@ SUGGEST_RULES = [
 ]
 
 
-def boundary_scan(doc, st: Settings, keywords: list[str] | None = None) -> dict:
-    """**ヘッダー／フッターの切り取り線が本文を巻き込んでいないかを診断する。**
-
-    きっかけ（2026-08-26、D社 2024 p76）：段の最後の2行が `footer_margin` で機械的に
-    切り捨てられ、生成AIを含む文が途中で切れたまま抽出されていた。全冊調査では
-    61冊中50冊前後で同種の取りこぼしがあり、**検索語を含む行も8件**落ちていた。
-    → footer_margin／header_y は文書ごとに合わせる必要がある。その判断材料を機械で出す。
-
-    落ちた行を2つに分ける（意味は読まない。位置と反復だけ）：
-    - **備品**：同じ文言・同じ位置が3割以上のページで繰り返す（柱・ロゴ）か、
-      数字・記号だけ（ページ番号）。→ 切り捨てが正しいもの
-    - **内容**：それ以外。ページ固有の文章・ラベル。→ 巻き込まれている疑いがあるもの
-
-    提案値：内容の行を全部残せる境界（フッターは「下端からの深さ」の最小値、
-    ヘッダーは y0 の最小値）。ただし備品がその境界より内側に食い込む場合は
-    値だけでは分けられないので、提案なし＋「干渉」印を付けて人に委ねる。
-
-    ⚠️ これは診断であって自動適用ではない。適用は人が文書ごとに決め、
-       判断は設定JSONの `boundary_check` に残す（→「前処理での恣意的な取捨選択」を残す方針）。
-    """
-    rx = keyword_regex(keywords) if keywords else None
-    skip = st.skip_set()
-    pagemark = re.compile(r"[\d\s\-–—―/|.,pP()©®]*")     # ページ番号・記号だけの行
-    drops = {"header": [], "footer": []}
-    n_pages = 0
-    dims: dict[int, list[float]] = {}
-    for i, page in enumerate(doc):
-        pageno = i + 1
-        # 寸法は**全ページ**分持つ（除外ページも）。画面のビューアが全ページに
-        # 境界線と除外の覆いを重ねるので、行が落ちていないページの縦横も要る
-        dims[pageno] = [round(page.rect.width, 1), round(page.rect.height, 1)]
-        if pageno in skip:
-            continue
-        n_pages += 1
-        h = page.rect.height
-        for ln in collect_lines(page, st, None):
-            d = ln.get("dropped")
-            if d not in ("header", "footer"):
-                continue
-            t = ln["text"].strip()
-            drops[d].append({
-                "ページ": pageno, "text": t,
-                # 反復判定の鍵。座標は丸める（レンダリング揺れの吸収）
-                "_key": (t, round(ln["x0"]), round(ln["y0"])),
-                # 境界の提案に使う距離：フッターは下端からの深さ、ヘッダーは上端から
-                "深さ": round(h - ln["y1"], 1) if d == "footer" else round(ln["y0"], 1),
-                # 画面で原本の上に重ねる矩形（pt。画像側で倍率をかける）
-                "rect": [round(ln["x0"], 1), round(ln["y0"], 1),
-                         round(ln["x1"], 1), round(ln["y1"], 1)],
-            })
-
-    out = {"ページ数": n_pages, "総ページ": len(doc),
-           # 全ページの寸法 [幅, 高さ]（pt）。矩形・線・覆いを画像に重ねる換算に使う
-           "寸法": {str(k): v for k, v in dims.items()}}
-    for side, cur in (("footer", st.footer_margin), ("header", st.header_y)):
-        rows = drops[side]
-        freq = collections.Counter()
-        for pageno, keys in _group_keys_by_page(rows):
-            for k in keys:
-                freq[k] += 1
-        thresh = max(2, n_pages * 0.3)
-        # ページ番号の判定は**位置の反復**で行う。「12」「13」…と文言は毎ページ違うが、
-        # 置かれる場所は同じ（左右交互でも、それぞれの位置が3割を超える）。
-        # 一方、グラフの目盛りや数値ラベルはページ固有の位置に出るので反復しない
-        posfreq = collections.Counter()
-        seen_pos: dict[int, set] = {}
-        for r in rows:
-            if pagemark.fullmatch(r["text"]):
-                seen_pos.setdefault(r["ページ"], set()).add(r["_key"][1:])
-        for poss in seen_pos.values():
-            for k in poss:
-                posfreq[k] += 1
-        content, repeats, pagenums, numlabels = [], [], [], []
-        for r in rows:
-            if freq[r["_key"]] >= thresh:
-                repeats.append(r)      # 柱と同じ反復。余白を狭めても repeat の除去で落ち続ける
-            elif pagemark.fullmatch(r["text"]):
-                if posfreq[r["_key"][1:]] >= thresh:
-                    pagenums.append(r)     # ページ番号（数字だけ×同じ位置がほぼ毎ページ）
-                else:
-                    numlabels.append(r)    # グラフの数値ラベル等。境界の提案には使わない
-            else:
-                content.append(r)
-        kw_hits = [r for r in content if rx and rx.search(r["text"])]
-        suggest, clash = None, False
-        if content:
-            limit = min(r["深さ"] for r in content)          # 内容を全部残せる境界
-            cand = max(0, int(limit))                        # 切り下げ＝内容側に安全
-            # 🔴 衝突の判定は「ページ番号」だけで見る。反復する行（柱・注記）は余白と無関係に
-            #    落ち続けるし、数値ラベルは戻っても害がない（短いのでL1のmin_lenでも落ちる）
-            worst = max((r["深さ"] for r in pagenums), default=None)
-            if worst is not None and worst >= cand:
-                clash = True                                  # ページ番号が境界の内側→値では分けられない
-            else:
-                suggest = cand
-        def _row(r, cls):
-            return {"ページ": r["ページ"], "text": r["text"][:120], "分類": cls,
-                    "深さ": r["深さ"], "rect": r["rect"],
-                    "検索語": bool(cls == "本文" and rx and rx.search(r["text"]))}
-        out[side] = {
-            "現在": cur, "件数": len(content), "備品": len(repeats) + len(pagenums),
-            "番号": len(pagenums), "数字ラベル": len(numlabels),
-            "検索語入り": len(kw_hits), "提案": suggest, "干渉": clash,
-            # 落ちた行（分類・座標つき）。画面はこれだけで「境界を動かすとどの行が
-            # 残る／戻るか」をサーバーに聞かずに描ける。⚠️ 入れるのは判断に効く2種だけ：
-            # 本文（残したいもの）と番号（境界を下げると戻るもの）。反復は余白と無関係に
-            # 落ち続け、数字ラベルは戻っても害がない（→ 上の衝突判定と同じ理屈）。
-            # 全部入れると柱の多い冊で数千行になり、キャッシュも画面も無駄に重くなる
-            "行": ([_row(r, "本文") for r in content]
-                   + [_row(r, "番号") for r in pagenums]),
-        }
-    return out
-
-
-def _group_keys_by_page(rows: list[dict]):
-    """(ページ, そのページの鍵集合) を返す。同じページ内の重複は1回に数える。"""
-    by_page: dict[int, set] = {}
-    for r in rows:
-        by_page.setdefault(r["ページ"], set()).add(r["_key"])
-    return by_page.items()
+# 🔴 boundary_scan（境界の診断と自動提案）は 2026-08-31 に座標カットの廃止とともに削除した。
+#    v3 の実装と検証は 記録/2026-08-31.md、経緯は git 履歴に残っている。
 
 
 def suggest_skips(doc, body: float, st: Settings | None = None) -> list[dict]:
