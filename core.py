@@ -160,6 +160,11 @@ OP_REASONS = {
          "note": "見出しは句点で終わらないので、切り離さないと下の文と1つの文になる"},
         {"key": "別の文の癒着", "label": "別々の文・ラベルが1つのブロックに入っていた",
          "note": "図解のカードなどで、行間が詰まっていて1ブロックにまとまったもの"},
+        # 2026-09-01 表の行の分割（apply_table_splits）に伴い追加（D社 2024 p11・2025 p10）
+        {"key": "セル群の癒着", "label": "表の1行に、独立した箇条書きのセル群が複数連結されていた",
+         "note": "列見出し（KPI／実績など）を異にする箇条書きセル群が1行に連結されたKPI表など"
+                 "（ラベルが行内で再掲される場合を含む）。セル群の境目で分け、"
+                 "ヒットを含むセル群を単位にする（単一セル内の箇条書きは行全体のまま＝08-26の決定）"},
     ],
     # 種別：フォントptからの自動判定が外れる典型
     "kinds": [
@@ -231,6 +236,10 @@ OP_REASONS = {
          "note": "ページ上部の章名ナビ・ランニングヘッド。反復除去で落ちなかったもの"},
         {"key": "フッター", "label": "フッターのため除外（ページ番号・欄外）",
          "note": "ページ下部の番号・欄外表記。反復除去で落ちなかったもの"},
+        # 2026-09-01 追加（D社 2024 p114 のリンク一覧「〈生成AI製品名〉: 製品・ソリューション」）
+        {"key": "リンク", "label": "リンクのため除外（参照先のラベル・ボタン文言）",
+         "note": "ウェブページ等への誘導リンクの文言。⚠️ 文の形をした記述に"
+                 "リンクが張られているだけのものは内容なので残す"},
     ],
     # 抽出単位（L2）に足した文
     "unit_merges": [
@@ -1118,8 +1127,12 @@ def apply_splits(line_groups: list[list[dict]], st: Settings,
 
     ⚠️ **結合（joins）より前**、ブロックが group_lines から出てきた直後の行のまとまりに
     適用する。だから `text` は**結合前**の生text（joins の a/b と同じ流儀）。
-    分けた後ろ半分にも続けて照合するので、1ブロックを3つ以上に分けることもできる
-    （2本目のルールは、1本目で分けた後ろ半分の生textを名指しする）。
+    分けた**両方の断片**に続けて照合するので、1ブロックを3つ以上に分けることもできる
+    （2本目のルールは、1本目で分けた断片の生textを名指しする）。
+    🔴 前半にも照合を続けるのは 2026-09-01 から。従来は後ろ半分だけだったため、
+    「後ろの境目 → 前の境目」の順で操作すると、前半を名指しした2本目のルールが
+    どこにも当たらず**黙って効かなかった**（D社 2025 p105 で実害。UIは見えている
+    ブロックの境目を選ばせるので、エンジン側が操作の順序に依存してはいけない）。
 
     戻り値は `(分けた後の行グループ, 当たらなかったルール)`。
     当たらなかったルールを捨てない理由は `apply_joins` と同じ（黙って効かないのが一番まずい）。
@@ -1130,8 +1143,12 @@ def apply_splits(line_groups: list[list[dict]], st: Settings,
     used: set[int] = set()
     out: list[list[dict]] = []
     for g in line_groups:
-        rest = g
-        while True:
+        # ルールが当たらなくなるまで全断片を見直す。1回の分割で1本のルールを消費するので
+        # 必ず止まる。断片は元の並び順のまま（前半を i の位置で置き換える）
+        pieces: list[list[dict]] = [g]
+        i = 0
+        while i < len(pieces):
+            rest = pieces[i]
             raw = "".join(ln["text"] for ln in rest)
             pre = [min(ln["x0"] for ln in rest), min(ln["y0"] for ln in rest)]
             hit = None
@@ -1148,11 +1165,11 @@ def apply_splits(line_groups: list[list[dict]], st: Settings,
                     hit = (j, k)
                     break
             if hit is None:
-                out.append(rest)
-                break
+                i += 1                       # この断片はもう分かれない。次へ
+                continue
             used.add(hit[0])
-            out.append(rest[:hit[1]])
-            rest = rest[hit[1]:]
+            pieces[i:i + 1] = [rest[:hit[1]], rest[hit[1]:]]   # 前半も含めて i から見直す
+        out.extend(pieces)
     return out, [rules[j] for j in range(len(rules)) if j not in used]
 
 
@@ -1360,17 +1377,81 @@ def table_row_groups(tables: list[dict], lines: list[dict],
         #    中心の y を行の高さで丸めて「見た目が同じ行」を揃え、その中を x の順にする
         items = sorted(buckets[(ti, ri)], key=lambda p: (
             p[0], round((p[1]["y0"] + p[1]["y1"]) / 2 / max(p[1]["size"], 1.0) / 0.8), p[1]["x0"]))
-        cols: list[list[str]] = []
-        last_col = None
-        for ci, ln in items:
-            if ci != last_col:
-                cols.append([])
-                last_col = ci
-            cols[-1].append(ln["text"].strip())
-        raw = " ".join("".join(c) for c in cols if any(c))
-        out.append({"lines": [ln for _, ln in items], "raw": raw,
+        out.append({"lines": [ln for _, ln in items],
+                    # 各行の列バンド。分割（apply_table_splits）で raw を組み直すのに使う
+                    "cols": [ci for ci, _ in items],
+                    "raw": _row_raw(items),
                     "table": ti, "row": ri})
     return out, rest
+
+
+def _row_raw(items: list[tuple[int, dict]]) -> str:
+    """表の行の生text（同じ列の中は詰めて繋ぎ、列の間は半角スペース。→ 上の「行への組み直し」）。"""
+    cols: list[list[str]] = []
+    last_col = None
+    for ci, ln in items:
+        if ci != last_col:
+            cols.append([])
+            last_col = ci
+        cols[-1].append(ln["text"].strip())
+    return " ".join("".join(c) for c in cols if any(c))
+
+
+def apply_table_splits(table_rows: list[dict], st: Settings,
+                       pageno: int) -> tuple[list[dict], list[dict]]:
+    """**表の行ブロックを、行（セル断片）の境目で2つに分ける**（`apply_splits` の表版。2026-09-01）。
+
+    きっかけ（D社 2024 p11）：KPI表で、1つの行の中に「ラベル＋箇条書き」のセル群が
+    目標側と実績側の2つ連結され、行の鍵になるラベルが行内で再掲されていた。
+    行が実質、並列したサブ表の連結になっているケースは、セル群の境目で分けて
+    「ヒットを含むセル群＝抽出単位」とする（→ 記録/2026-09-01.md。
+    単一セル内の箇条書きは 08-26 の決定どおり行全体のまま）。
+
+    ルールの形は splits と同じ `{"page", "text", "line", "reason"}`（設定JSONも同じ場所）。
+    ⚠️ 照合の `text` は**行の raw**。通常ブロックと違い、表の raw は列の組み直しで
+    作られるので行textの連結とは一致しない。だから分けた後の raw も同じ組み直し
+    （_row_raw）で作り直す。`line` は行ブロック内の並び（列→上から）の
+    N 行目の手前で切る（1始まり）。分けた**両方の断片**に続けて照合するので、
+    2本目のルールで3つ以上に分けることもできる（apply_splits と同じ流儀。
+    🔴 前半にも照合を続ける＝操作の順序に依存しない。2026-09-01）。
+
+    戻り値は `(分けた後の行ブロック, 使われたルール)`。
+    **未適用の報告は analyze_page 側で apply_splits の結果と突き合わせる**
+    （同じ splits のルールを、通常ブロックと表の行の両方の経路で探すため）。
+    """
+    rules = [r for r in (st.splits or []) if r.get("page") == pageno]
+    if not rules or not table_rows:
+        return table_rows, []
+    used: list[dict] = []
+    out: list[dict] = []
+    for tr in table_rows:
+        pieces: list[dict] = [tr]
+        i = 0
+        while i < len(pieces):
+            rest = pieces[i]
+            hit = None
+            for r in rules:
+                if any(r is u for u in used) or (r.get("text") or "") != rest["raw"]:
+                    continue
+                try:
+                    k = int(r.get("line") or 0)
+                except (TypeError, ValueError):
+                    k = 0
+                if 1 <= k < len(rest["lines"]):
+                    hit = (r, k)
+                    break
+            if hit is None:
+                i += 1
+                continue
+            r, k = hit
+            used.append(r)
+            head = {**rest, "lines": rest["lines"][:k], "cols": rest["cols"][:k],
+                    "raw": _row_raw(list(zip(rest["cols"][:k], rest["lines"][:k])))}
+            tail = {**rest, "lines": rest["lines"][k:], "cols": rest["cols"][k:],
+                    "raw": _row_raw(list(zip(rest["cols"][k:], rest["lines"][k:])))}
+            pieces[i:i + 1] = [head, tail]      # 前半も含めて i から見直す
+        out.extend(pieces)
+    return out, used
 
 
 # --- 続いている文を自動で繋ぐ（2026-08-22 追加） ---------------------------------
@@ -1490,10 +1571,16 @@ def analyze_page(page, st: Settings, body: float, pageno: int,
     # 表に入らなかった行だけを ④ に渡す
     tables = find_page_tables(page, st, pageno)
     table_rows, live = table_row_groups(tables, live)
+    # 表の行の分割は、行の組み直しの直後に適用する（セル群の癒着 → apply_table_splits）
+    table_rows, used_tbl_splits = apply_table_splits(table_rows, st, pageno)
 
     # 手で指定したブロックの分割は、group_lines の直後（＝結合より前）に適用する。
     # ルールの鍵が「結合前の生text」であることを保つため（→ apply_splits）
     line_groups, unused_splits = apply_splits(list(group_lines(live, st)), st, pageno)
+    # 同じ splits のルールを通常ブロックと表の行の両方の経路で探すので、
+    # 「未適用」は**どちらにも当たらなかったもの**だけにする
+    unused_splits = [r for r in unused_splits
+                     if not any(r is u for u in used_tbl_splits)]
 
     groups = []
     for g in line_groups:
@@ -1889,13 +1976,17 @@ def extract_units(rows: list[dict], keywords: list[str] | None = None,
         u = {"anchor": i, "idxs": idxs, "規則": rule, "結合": None, "除外理由": None}
 
         # 手作業①：この単位に足された文（照合はヒット文＋ページ）
+        # ⚠️ **既に別の単位に属している文は足さない**（2026-09-01。D社 2025 p63〔誌面〕で、
+        #    足した文が検索語の追加（AIエージェント）で自分もヒットになり、
+        #    「自分の単位」と「足された先の単位」の両方に載って黙って二重カウントされた。
+        #    consumed を見ることで、同じ文はどちらか片方＝先に確定した単位だけに属する）
         for k, m in enumerate(mg_rules):
             if int(m.get("page") or 0) == int(r["ページ"]) and (m.get("hit") or "") == r["文"]:
                 used_mg.add(k)
                 u["結合"] = m.get("reason") or ""
                 for t in (m.get("add") or []):
                     j = _find_near_row(rows, t, i)
-                    if j is not None and j not in u["idxs"]:
+                    if j is not None and j not in consumed:
                         u["idxs"].append(j)
                         consumed.add(j)
         # 手作業②：抽出から外す

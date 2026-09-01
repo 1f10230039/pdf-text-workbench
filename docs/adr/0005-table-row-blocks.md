@@ -1,6 +1,6 @@
 # 0005. 罫線表は「行」単位のブロックに再構成する
 
-- Status: Accepted
+- Status: Accepted（[0010](0010-table-cell-group-splits.md) が一部を補正：行内に複数のセル群が連結される場合は手動で分割できる）
 
 ## Context
 

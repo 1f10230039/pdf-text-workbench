@@ -14,3 +14,4 @@
 | [0007](0007-pymupdf-lock.md) | PyMuPDF の呼び出しをグローバルロックで直列化する | Accepted |
 | [0008](0008-records-out-of-cache-signature.md) | 人の判断の「記録」はキャッシュ署名に含めない | Accepted |
 | [0009](0009-no-margin-cut.md) | 座標によるヘッダー/フッターの切り取りとページ除外を廃止する | Accepted |
+| [0010](0010-table-cell-group-splits.md) | 表の行に複数のセル群が連結される場合はセル群の境目で分割する | Accepted |
