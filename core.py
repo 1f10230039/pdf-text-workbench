@@ -1099,10 +1099,19 @@ def apply_joins(groups: list[dict], st: Settings, pageno: int) -> list[dict]:
     used: set[tuple[str, str]] = set()
     out: list[dict] = []
     prev_raw = None                 # 直前に処理した「元の」ブロックの生text
+    last_live = None                # 結合先＝直前の**透過でない**ブロック
     for g in groups:
-        if out and (prev_raw, g["raw"]) in rules:
+        # 🔴 全単位が除外されたブロックは**透過**（2026-09-02。T社 2024 p46）。
+        #    段の継ぎ目にページ番号が挟まると結合の隣接が切れる。「データから消す」
+        #    （excluded）を選んだブロックは、結合の流れの上でも居ないものとして扱う
+        if g.get("全除外"):
+            g["parts"] = [g["raw"]]
+            g["part_boxes"] = [g["bbox"][:2]]
+            out.append(g)
+            continue
+        if last_live is not None and (prev_raw, g["raw"]) in rules:
             used.add((prev_raw, g["raw"]))
-            p = out[-1]
+            p = last_live
             p["raw"] += g["raw"]
             p["lines"] += g["lines"]
             p["parts"].append(g["raw"])
@@ -1112,6 +1121,7 @@ def apply_joins(groups: list[dict], st: Settings, pageno: int) -> list[dict]:
         g["parts"] = [g["raw"]]
         g["part_boxes"] = [g["bbox"][:2]]
         out.append(g)
+        last_live = g
         prev_raw = g["raw"]
     return out, [{"a": a, "b": b} for a, b in rules - used]
 
@@ -1535,17 +1545,23 @@ def auto_join_groups(groups: list[dict], st: Settings) -> list[dict]:
     for g in groups:
         # 繋ぐ相手＝直前のブロック。ただし直前が図解のラベル（小・極小）なら、その手前の
         # 本文まで遡る（段の末尾の本文 → 図 → 次の段の頭の本文、という並びが多いため）。
-        # 遡る途中に 本文・大・表 があればそこで止める（別の文章をまたいでは繋がない）
+        # 遡る途中に 本文・大・表 があればそこで止める（別の文章をまたいでは繋がない）。
+        # 🔴 全単位が除外されたブロックは透過して遡る（2026-09-02 → apply_joins の説明）
+        if g.get("全除外"):
+            out.append(g)               # 除外したブロック自身は誰とも繋がない
+            continue
         target = None
         if out and g["kind"] == "本文":
             for p in reversed(out):
+                if p.get("全除外"):
+                    continue
                 if p["kind"] == "本文":
                     target = p
                     break
                 if p["kind"] not in ("小", "極小"):
                     break
         elif out:
-            target = out[-1]
+            target = next((p for p in reversed(out) if not p.get("全除外")), None)
         if target is not None and _continues(target, g):
             target["raw"] += g["raw"]
             target["lines"] += g["lines"]
@@ -1642,6 +1658,13 @@ def analyze_page(page, st: Settings, body: float, pageno: int,
     #    結合は「隣り合うブロック」を繋ぐ操作なので、先に順序を確定させないと隣が変わる
     for g in groups:
         g["bbox"] = _bbox(g)
+    # 🔴 全単位が除外されるブロックに印を付ける（結合より前。→ apply_joins の「透過」）。
+    #    除外ルールが無い文書ではコストゼロで素通り
+    if st.excluded:
+        for g in groups:
+            units_txt = to_units(g["raw"], st)
+            g["全除外"] = bool(units_txt) and all(
+                ex.hit(t, pageno, g["size"], g["bbox"]) for t in units_txt)
     groups = drop_duplicate_blocks(groups)
     if st.order != "pdf":
         groups = reading_order(groups, page.rect.width)
