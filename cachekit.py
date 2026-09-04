@@ -3,16 +3,16 @@
 
 なぜ1つのモジュールにするか:
     キャッシュの鍵（設定の署名）や「設定JSONが無い文書の始め方」（表紙・目次の自動候補）を
-    複数の場所に別々に書くと、**片方だけ直したときに署名が食い違って毎回解析し直しになる**
-    （2026-08-25 に実際に起きた）。だから正はここ1か所。
+    複数の場所に別々に書くと、片方だけ直したときに署名が食い違って毎回解析し直しになる。
+    だから正はここ1か所。
 
 ディスクキャッシュ（DATA/.cache/）:
     {名前}.rows.json  … extract_doc の結果。{"mtime":…, "sig":…, "rows":[…]}
     {名前}.meta.json  … 一覧バッジ用。{"mtime":…, "sig":…, "単位数":…, "採用数":…, "確認数":…}
     {名前}.cands.json … 除外ページの自動候補（suggest_skips）と推定本文pt。全ページ走査を1回で済ます
 
-⚠️ rows.json の先頭は必ず {"mtime": …, "sig": …, "rows": の順で書く。
-   cache_state() が**ファイル全体を読まずに**先頭だけで有効判定するため（1冊数MBある）。
+注意: rows.json の先頭は必ず {"mtime": …, "sig": …, "rows": の順で書く。
+      cache_state() がファイル全体を読まずに先頭だけで有効判定するため（1冊数MBある）。
 """
 import json
 import os
@@ -28,19 +28,18 @@ PDF_DIR = DATA / "pdf"
 CONF_DIR = DATA / "設定"
 CACHE_DIR = DATA / ".cache"
 
-# extract_doc の結果を**変えない**フィールドは署名から外す：
+# extract_doc の結果を変えないフィールドは署名から外す：
 #   ・unit_*      … 抽出単位（L2）の手作業と確認印。入れると「1件確認するたびに全文解析し直し」
-#   ・boundary_check・task_states … 人の判断の**記録**（旧・切り取りと除外／記録パネル）。
-#     入れると「問題なし」と記録しただけで全冊が要再解析になる（2026-08-27 に実際に起きた）
-#   ・skip_pages  … 2026-08-31 にページ除外の**適用を廃止**（分母は全ページ・全文）。
-#     記録としては設定JSONに残るが、extract_doc は見ないので署名にも入れない
-#     （同日、座標カット header_y / footer_margin は Settings ごと廃止＝署名からも自然に消えた）
+#   ・boundary_check・task_states … 人の判断の記録。入れると「問題なし」と記録した
+#     だけで全冊が要再解析になる
+#   ・skip_pages  … ページ除外は適用しない（分母は全ページ・全文）。記録としては
+#     設定JSONに残るが、extract_doc は見ないので署名にも入れない
 L2_ONLY_FIELDS = ("unit_merges", "unit_excludes", "unit_checks",
                   "boundary_check", "task_states", "skip_pages")
 
 
 def set_data_dir(path):
-    """公開デモ（PUBLIC_MODE）は置き場が一時ディレクトリになる。app.py が起動時に呼ぶ。"""
+    """公開デモ（PUBLIC_MODE）では置き場が一時ディレクトリになる。app.py が起動時に呼ぶ。"""
     global DATA, PDF_DIR, CONF_DIR, CACHE_DIR
     DATA = Path(path)
     PDF_DIR = DATA / "pdf"
@@ -67,7 +66,7 @@ def rows_sig(st: core.Settings) -> str:
 def load_keywords() -> list[str]:
     """検索語（設定\\検索語.json。無ければ core.KEYWORDS）。
 
-    🔴 検索語は**全文書・全時点で共通**（片方だけ変えると比較が壊れる）。
+    検索語は全文書・全時点で共通（片方だけ変えると比較が壊れる）。
     """
     try:
         d = json.loads((CONF_DIR / "検索語.json").read_text(encoding="utf-8"))
@@ -127,8 +126,8 @@ def load_cands(name: str, get_doc=None) -> dict:
 def load_settings(name: str, get_doc=None) -> tuple[core.Settings, bool]:
     """文書ごとの設定。無ければ既定値。(設定, 保存済みか) を返す。
 
-    🔴 2026-08-31 まで「設定JSONが無い文書は表紙・目次の自動候補を除外に入れて始める」
-    だったが、ページ除外の適用を廃止したので既定値だけになった（→ core.extract_doc）。
+    設定JSONが無い文書は既定値そのままで始める。ページ除外を適用しないので、
+    表紙・目次の自動候補をあらかじめ入れておく必要がない（→ core.extract_doc）。
     """
     p = conf_path(name)
     if p.exists():
@@ -139,7 +138,7 @@ def load_settings(name: str, get_doc=None) -> tuple[core.Settings, bool]:
 # --- キャッシュの有効判定と読み書き ------------------------------------------
 
 def _rows_head(mtime: float, sig: str) -> bytes:
-    """rows.json の先頭にあるはずのバイト列（→ モジュール先頭の ⚠️）。"""
+    """rows.json の先頭にあるはずのバイト列（→ モジュール先頭の注意書き）。"""
     head = json.dumps({"mtime": mtime, "sig": sig}, ensure_ascii=False)
     return (head[:-1] + ', "rows":').encode("utf-8")
 
@@ -147,7 +146,7 @@ def _rows_head(mtime: float, sig: str) -> bytes:
 def cache_state(name: str) -> str:
     """"ok"＝rows キャッシュが今の設定・PDFと一致 ／ "stale"＝あるが古い ／ "none"＝無い。
 
-    ⚠️ ここは一覧（61冊×毎回）から呼ばれるので、**重い処理をしてはいけない**
+    注意: ここは一覧（61冊×毎回）から呼ばれるので、重い処理をしてはいけない
     （設定JSONの読み込みと署名の計算だけ。PDFは開かない）。
     """
     p = pdf_path(name)
@@ -221,7 +220,7 @@ def warm_doc(name: str, keywords: list[str] | None = None) -> dict:
     """1冊を解析してキャッシュ（rows / meta / cands）を作る。有効なら何もしない。
 
     ui/app.py のジョブがサブプロセス（warm_cache.py）越しに並列で呼ぶほか、
-    pdf2txt.py も同じ結果を書く。**どこから呼んでも同じキャッシュになる**ことが大事。
+    pdf2txt.py も同じ結果を書く。どこから呼んでも同じキャッシュになることが大事。
     """
     t0 = time.time()
     p = pdf_path(name)

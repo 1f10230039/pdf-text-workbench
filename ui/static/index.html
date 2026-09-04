@@ -19,7 +19,7 @@
 </head>
 <body>
 
-<!-- 線画アイコン。必ず文字と組で使う（→ デザイン方針.md） -->
+<!-- 線画アイコン。必ず文字と組で使う -->
 <svg width="0" height="0" style="position:absolute" aria-hidden="true">
   <defs>
     <symbol id="i-doc" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h6"/></symbol>
@@ -70,7 +70,6 @@
       <span class="pageno"><input type="number" id="pageNo" value="1" min="1"><span class="of">/ <span id="pageMax"></span></span></span>
       <button id="next" class="ghost icon" title="次のページへ（→ キー）"><svg class="ic"><use href="#i-chev-r"/></svg></button>
       <span class="label" id="pageLabel" title="印刷上のページ番号"></span>
-      <!-- 「このページを除外」は 2026-08-31 に撤去（ページ除外の廃止。分母は全ページ・全文） -->
       <span id="busy" hidden>解析中</span>
     </div>
     <div class="tb-right">
@@ -109,7 +108,7 @@
       <button id="ratesBtn" class="ghost" title="RQ1の材料：冊ごとの 総文数・ヒット文数・総ページ数・ヒットページ数と出現率（絶対数と率の両方）。分子・分母とも機械的検出＝確認モードの手作業は影響しません。出現率.csv にも書き出します"><svg class="ic"><use href="#i-list"/></svg>出現率</button>
       <button id="auditBtn" class="primary" title="選んだ文書（未選択なら全部）の生成AI関連語のヒット箇所を、1件ずつ順に確認します"><svg class="ic"><use href="#i-gather"/></svg><span id="auditBtnLabel">ヒットを確認（全冊）</span></button>
     </div>
-    <!-- 進み具合と「次にやること」。何をすればいいかが一目で分かるように（2026-08-31 追加） -->
+    <!-- 進み具合と「次にやること」。何をすればいいかが一目で分かるように -->
     <div id="homeProg" class="home-prog" hidden>
       <span id="hpMain"></span>
       <div class="audit-bar home-bar"><div id="hpFill"></div></div>
@@ -137,7 +136,7 @@
       </ol>
       <p class="note">出現率（冊ごとのヒット文数・総文数と率＝RQ1の材料）は上の<b>出現率</b>ボタンから。<br>
         前処理は<b>柱（全ページで反復する文言）の除去だけ</b>＝冊ごとの判断はありません。
-        手作業はすべて設定JSONに残り、同じ入力から同じ出力が再現されます（卒論の再現性と監査の材料）。</p>
+        手作業はすべて設定JSONに残り、同じ入力から同じ出力が再現されます（再現性と監査の材料）。</p>
     </div>
     <div class="card">
       <h3><svg class="ic"><use href="#i-plus"/></svg>新しいPDFを追加</h3>
@@ -149,7 +148,7 @@
   </aside>
 </section>
 
-<!-- ===== 確認モード（ヒット箇所を1件ずつ確認。卒論では「監査」。2026-08-25 追加） ===== -->
+<!-- ===== 確認モード（ヒット箇所を1件ずつ確認する画面） ===== -->
 <section id="audit" hidden>
   <div class="audit-top">
     <button id="auditBack" class="ghost"><svg class="ic"><use href="#i-back"/></svg>一覧へ戻る</button>
@@ -170,7 +169,7 @@
     <button id="auditPreview" class="ghost mini" title="Excelにできる行と列をそのまま表で確認します"><svg class="ic"><use href="#i-table"/></svg>Excelプレビュー</button>
     <button id="auditExport" class="primary mini"><svg class="ic"><use href="#i-export"/></svg>全冊書き出し</button>
   </div>
-  <!-- 左＝単位カード（上・操作もここ）＋キュー一覧（下）／右＝原本PDFだけ（2026-08-25 深夜に集約） -->
+  <!-- 左＝単位カード（上・操作もここ）＋キュー一覧（下）／右＝原本PDFだけ -->
   <div id="auditMain">
     <div id="auditLeft">
       <div id="auditCard"></div>
@@ -180,8 +179,6 @@
   </div>
 </section>
 
-<!-- 「切り取りと除外」の画面は 2026-08-31 に座標カットの廃止とともに撤去した
-     （→ 記録/2026-08-31.md、git 履歴） -->
 
 <!-- 読み込み中（時間のかかる処理は進捗バー＋「いま何をしているか」を出す） -->
 <div id="loading" hidden>
@@ -234,7 +231,7 @@
         </div>
         <p class="note">全ページのこの割合以上で「同じ位置に同じ文言」が出る行を柱（ナビ・ランニングヘッド・タイトル入りフッター）として落とします（<code>0</code> で無効）。
           落とした行は<b>赤い破線</b>で出ます。これが唯一の「捨てる」規則です
-          （ヘッダー・フッターの座標カットは 2026-08-31 に廃止。反復しない番号・章名が
+          （ヘッダー・フッターの座標カットは行いません。反復しない番号・章名が
           ヒットに混ざったときは、確認モードで「ヘッダー／フッターのため除外」を選びます）。</p>
       </section>
       <section class="cfg">
@@ -280,7 +277,7 @@
       <section class="cfg">
         <h3><span class="step">5</span>ページ一覧 <button class="mini ghost" id="loadPages">一覧を読む</button></h3>
         <p class="note">クリックでそのページへ飛べます（下線＝表のあるページ）。
-          ページ除外は 2026-08-31 に廃止しました。分母は全ページ・全文で数えます。</p>
+          ページ単位の除外は行いません。分母は全ページ・全文で数えます。</p>
         <div id="pageList" class="pagelist"></div>
       </section>
       <div class="drawer-foot">
@@ -290,7 +287,7 @@
       </div>
     </section>
 
-    <!-- 記録（手を入れた箇所。手順チェックリストは 2026-08-31 に撤去） -->
+    <!-- 記録（手を入れた箇所） -->
     <section id="taskPane" class="sbpane" hidden>
       <p class="hint narrowonly tp-narrow">画面の幅が足りないので、右の文の一覧を畳んでいます。</p>
       <p class="hint sb-sub" id="taskCount"></p>
@@ -314,7 +311,7 @@
         <span class="hint">初回は数秒〜数十秒かかります。窓をクリックするとそのページへ飛びます。</span></p></div>
     </section>
 
-    <!-- 抽出単位（L2。2026-08-25 追加） -->
+    <!-- 抽出単位（L2） -->
     <section id="unitPane" class="sbpane" hidden>
       <div class="ctx-ctl">
         <label class="ctx-kw">検索語 <input id="unitKw" placeholder="空欄＝既定のリスト" title="カンマ区切り。英字の語は単語として当てます"></label>

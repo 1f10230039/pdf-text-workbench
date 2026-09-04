@@ -7,16 +7,16 @@ PDF→テキスト化を、原本と見比べながら手で詰めるための�
     → ブラウザで http://127.0.0.1:5000
 
 やること:
-    ① PDFを開く（アップロード or 卒研データ\\pdf\\ から選ぶ）
-    ② ヘッダー／フッターの境界線をドラッグで決める（自動提案 → 原本を見て確認）
-    ③ 本文ptを確認する（サイズ分布を見る）
-    ④ 結合のパラメータを詰める（COL_TOL / LINE_GAP）
+    ① PDFを開く（アップロード or データディレクトリの pdf\\ から選ぶ）
+    ② 本文ptを確認する（サイズ分布を見る）
+    ③ 結合のパラメータを詰める（COL_TOL / LINE_GAP）
+    ④ 確認モードで、検索語のヒットを1件ずつ原本と見比べて直す
     ⑤ 書き出す（文単位.csv ＋ 設定JSON）
-    ※ ページ除外（表紙・目次）は 2026-08-31 に廃止。分母は全ページ・全文で数え、
+    ※ ページ単位の除外は行わない。分母は全ページ・全文で数え、
       目次などのヒットは L2 の unit_excludes（理由コード付き）で単位側から外す
 
-⚠️ このファイルには抽出ロジックを書かない。全部 core.py を呼ぶ。
-   画面で詰めた設定が、バッチ（pdf2txt.py）でそのまま再現されることを保証するため。
+注意: このファイルには抽出ロジックを書かない。全部 core.py を呼ぶ。
+      画面で詰めた設定が、バッチ（pdf2txt.py）でそのまま再現されることを保証するため。
 """
 import csv
 import datetime
@@ -44,11 +44,11 @@ import core  # noqa: E402
 # --- 手元か、公開デモか -------------------------------------------------
 #
 # 公開デモ（PUBLIC_MODE=1）は、教授に「実際に触って再現してもらう」ためのもの。
-# ⚠️ **この画面には認証が無い。** だから公開側は手元のデータに一切触らせない：
-#     ・置き場をプロセスごとの一時ディレクトリにする（サーバー再起動で消える）
-#     ・アップロードのサイズに上限を置く
-#     ・開いたPDFを抱え込みすぎないようにする（無料枠はメモリが小さい）
-# 訪問者は**自分でPDFをアップロードして試す**。他社のPDFを同梱して再配布しないための形。
+# 注意: この画面には認証が無い。だから公開側は手元のデータに一切触らせない：
+#        ・置き場をプロセスごとの一時ディレクトリにする（サーバー再起動で消える）
+#        ・アップロードのサイズに上限を置く
+#        ・開いたPDFを抱え込みすぎないようにする（無料枠はメモリが小さい）
+# 訪問者は自分でPDFをアップロードして試す。他社のPDFを同梱して再配布しないための形。
 PUBLIC = os.environ.get("PUBLIC_MODE") == "1"
 
 if PUBLIC:
@@ -71,14 +71,14 @@ if PUBLIC:
 # 7.5MBのPDFを毎リクエスト開き直すと重いので、開いたものを持っておく
 _docs: "OrderedDict[str, tuple[float, pymupdf.Document]]" = OrderedDict()
 
-# 🔴 PyMuPDF はスレッドセーフでない。Flask は並行リクエストをスレッドで捌くので、
-#    同じ Document をページ画像のレンダリングと解析が**同時に**触ることがある
-#    （確認モードは選択と同時に /page・/hits・/page.jpg を並行で投げる）。
-#    実害の実例（2026-08-26）：サーバー起動後の最初の解析だけ行の y0 が約8pt ずれ
-#    （フォント計測が化けたとみられる）、その座標が分割ルールの位置キーに保存されて
-#    以後どのブロックにも当たらなくなった。
-#    → PyMuPDF を触る区間はすべてこのロックの中で行う。再入可（RLock）なので、
-#      get_doc を呼ぶ側が先にロックを取っていてもよい。1人で使う道具なので直列化で足りる
+# PyMuPDF はスレッドセーフでない。Flask は並行リクエストをスレッドで捌くので、
+# 同じ Document をページ画像のレンダリングと解析が同時に触ることがある
+# （確認モードは選択と同時に /page・/hits・/page.jpg を並行で投げる）。
+# 実害の例：サーバー起動後の最初の解析だけ行の y0 が約8pt ずれ（フォント計測が
+# 化けたとみられる）、その座標が分割ルールの位置キーに保存されて、
+# 以後どのブロックにも当たらなくなった。
+# → PyMuPDF を触る区間はすべてこのロックの中で行う。再入可（RLock）なので、
+#   get_doc を呼ぶ側が先にロックを取っていてもよい。1人で使う道具なので直列化で足りる
 _pdf_lock = threading.RLock()
 
 
@@ -96,7 +96,7 @@ def get_doc(name: str) -> pymupdf.Document:
             cached[1].close()
         doc = pymupdf.open(path)
         _docs[name] = (mtime, doc)
-        # ⚠️ 開いたPDFは数十MB使う。無料枠のメモリは小さいので、古いものから閉じる
+        # 注意: 開いたPDFは数十MB使う。無料枠のメモリは小さいので、古いものから閉じる
         while len(_docs) > DOC_CACHE_MAX:
             _, old = _docs.popitem(last=False)
             old[1].close()
@@ -121,7 +121,7 @@ def backup(p: Path) -> str | None:
     """上書きする前に、今あるファイルを `履歴\\` へ退避する。
 
     設定を詰める作業は「変えて → 書き出して → KH Coder で見て → また変えて」の繰り返しになる。
-    そのたびに前の設定が消えると、**戻れなくなる**。退避先はファイルの更新時刻で名前を付けるので、
+    そのたびに前の設定が消えると、戻れなくなる。退避先はファイルの更新時刻で名前を付けるので、
     同じ内容を二度取ることはない。
     """
     if not p.exists():
@@ -141,9 +141,9 @@ BAD_CHARS = re.compile(r'[\\/:*?"<>|]')
 def out_paths(name: str, label: str = "") -> tuple[Path, Path, Path]:
     """書き出し先。ラベルを付けると別名になる（設定を変えた版を並べて比べるため）。
 
-    返すのは **文単位CSV / ページ単位CSV / KH Coder 用 txt** の3つ（→ core.py「集計単位について」）。
+    返すのは 文単位CSV / ページ単位CSV / KH Coder 用 txt の3つ（→ core.py「集計単位について」）。
 
-    ⚠️ ラベルは画面から来る文字列なので、区切り文字を必ず弾いてから使う
+    注意: ラベルは画面から来る文字列なので、区切り文字を必ず弾いてから使う
     （`../` のような形で置き場の外を指させないため）。
     """
     if BAD_CHARS.search(label):
@@ -155,13 +155,13 @@ def out_paths(name: str, label: str = "") -> tuple[Path, Path, Path]:
 
 
 def load_settings(name: str) -> core.Settings:
-    """文書ごとの設定。無ければ既定値（2026-08-31 に表紙・目次の自動除外を廃止）。
+    """文書ごとの設定。無ければ既定値。
 
-    🔴 「無い文書の始め方」はバッチ（pdf2txt.py）と必ず同じにする。ズレると単位の件数が
-    食い違ううえ、キャッシュの署名も合わず毎回解析し直しになる（2026-08-25 に実際に起きた）。
+    「無い文書の始め方」はバッチ（pdf2txt.py）と必ず同じにする。ズレると単位の件数が
+    食い違ううえ、キャッシュの署名も合わず毎回解析し直しになる。
     だから実装は cachekit に1本化してある。
     """
-    # ⚠️ ロックの中で：キャッシュが無いとき cachekit が doc を触る（→ _pdf_lock）
+    # 注意: ロックの中で：キャッシュが無いとき cachekit が doc を触る（→ _pdf_lock）
     with _pdf_lock:
         return cachekit.load_settings(name, lambda: get_doc(name))[0]
 
@@ -176,8 +176,8 @@ def req_settings(name: str) -> core.Settings:
 
 # 描画済みページ画像。スクロールで戻ってきたときに再レンダリングしないためのもの。
 _img_cache: "OrderedDict[tuple, bytes]" = OrderedDict()
-# ⚠️ サムネイル（zoom 0.2、1枚 10KB 前後）も同じキャッシュに入る。400ページの文書で
-#    サムネイルを全部持っても溢れないように、ページ画像80枚ぶんから増やした
+# 注意: サムネイル（zoom 0.2、1枚 10KB 前後）も同じキャッシュに入る。400ページの文書で
+#       サムネイルを全部持っても溢れないように、ページ画像80枚ぶんから増やした
 IMG_CACHE_MAX = 600
 
 
@@ -191,7 +191,7 @@ def body_size_of(doc, st: core.Settings, name: str | None = None) -> float:
         return cachekit.load_cands(name, lambda: get_doc(name))["body0"]
 
 
-# 文書全体の解析結果（extract_doc の行）。**設定が同じなら再計算しない。**
+# 文書全体の解析結果（extract_doc の行）。設定が同じなら再計算しない。
 # メモリ（直近数冊）→ ディスク（.cache/、全冊。cachekit が正）→ 再計算 の3段。
 _rows_cache: "OrderedDict[tuple, list[dict]]" = OrderedDict()
 ROWS_CACHE_MAX = 6
@@ -220,10 +220,10 @@ def doc_rows(name: str, st: core.Settings) -> list[dict]:
     return rows
 
 
-# --- 検索語（グローバル。2026-08-25） ------------------------------------
-# 🔴 検索語は**全文書・全時点で共通**（片方だけ変えると比較が壊れる）。だから文書ごとの
-#    設定JSONではなく、1つのファイルに持つ。これも卒論の再現性の材料（表3.3の実体）。
-#    pdf2txt.py（バッチ）も同じファイルを読む。無ければ core.KEYWORDS が既定
+# --- 検索語（グローバル） --------------------------------------------------
+# 検索語は全文書で共通（一部だけ変えると比較が壊れる）。だから文書ごとの設定JSONでは
+# なく、1つのファイルに持つ。何を検索語としたかも再現性の材料なので、設定として残す。
+# pdf2txt.py（バッチ）も同じファイルを読む。無ければ core.KEYWORDS が既定
 KW_PATH = CONF_DIR / "検索語.json"
 
 
@@ -290,7 +290,6 @@ def api_docs():
         row = {"name": p.stem,
                "mb": round(p.stat().st_size / 1024 / 1024, 1),
                "設定済み": conf_path(p.stem).exists()}
-        # 「点検」バッジは 2026-08-31 に廃止（切り取りと除外の画面ごと撤去）
         # 抽出単位の数（前回解析時のメタ。→ cachekit.write_meta）。
         # 一覧で「ヒットの無い文書は開かなくてよい」と分かるようにするため
         meta_p = CACHE_DIR / f"{p.stem}.meta.json"
@@ -310,7 +309,7 @@ def api_docs():
 
 @app.post("/api/upload")
 def api_upload():
-    """アップロードされたPDFを 卒研データ\\pdf\\ に置く。
+    """アップロードされたPDFを、データディレクトリの pdf\\ に置く。
 
     ファイル名は「企業名_年度.pdf」に揃える。この名前がそのまま
     KH Coder の外部変数（企業名・年度）になるため。
@@ -363,8 +362,8 @@ def _info(name):
         _hist_cache[name] = (mtime, hist)
     total = sum(n for _, n in hist) or 1
     # 推定本文pt（→ cachekit.load_cands。ディスクにキャッシュ）。
-    # 🔴 2026-08-31 ページ除外の適用を廃止：候補（表紙・目次など）は返すが、
-    #    自動で除外に入れることはもうしない（分母は全ページ・全文）。
+    # ページ除外は適用しない。候補（表紙・目次など）は返すが、自動で除外に
+    # 入れることはしない（分母は全ページ・全文）。
     cd = cachekit.load_cands(name, lambda: doc)
     body, cands = cd["body0"], cd["cands"]
     return jsonify({
@@ -396,9 +395,9 @@ def _info(name):
 def api_page_jpg(name, pageno):
     """ページ画像。pageno は1始まり（人間が数える番号に揃える）。
 
-    ⚠️ **画像は設定に依存しない**（枠は画面側でHTMLとして重ねている）。
-       だからブラウザにキャッシュさせてよい。以前 no-store を付けていたせいで、
-       スクロールで戻るたびに再レンダリングが走っていた。
+    注意: 画像は設定に依存しない（枠は画面側でHTMLとして重ねている）。
+          だからブラウザにキャッシュさせてよい。以前 no-store を付けていたせいで、
+          スクロールで戻るたびに再レンダリングが走っていた。
     JPEGにしているのは、この用途（原本を目で確かめる）では可逆である必要がないため。
     """
     doc = get_doc(name)
@@ -427,7 +426,7 @@ def api_page_jpg(name, pageno):
 def api_page(name, pageno):
     """設定を渡すと、そのページの行・グループ・単位が座標付きで返る。
 
-    画面はこの戻り値だけで描く。**画面用の別処理は書かない**（バッチとのズレを防ぐため）。
+    画面はこの戻り値だけで描く。画面用の別処理は書かない（バッチとのズレを防ぐため）。
     """
     doc = get_doc(name)
     st = req_settings(name)
@@ -439,20 +438,18 @@ def api_page(name, pageno):
             "ページ": pageno,
             "ページ表示": core.page_label(page, pageno),
             "本文pt": body,
-            # 「除外ページ」フラグは 2026-08-31 に廃止（ページ除外は適用されない）
         })
     return jsonify(res)
 
 
-# --- 検索語の矩形（確認モード用。2026-08-26 追加） ----------------------
-# **「ブロックの枠は広すぎて、どの語に当たったのか分からない」という指摘への答え。**
-# ページ上の検索語の出現位置（語そのものの矩形）を返し、画面でピンポイントに光らせる。
+# --- 検索語の矩形（確認モード用） ------------------------------------------
+# ブロックの枠だけでは「どの語に当たったのか」が分からない。ページ上の検索語の
+# 出現位置（語そのものの矩形）を返し、画面でピンポイントに光らせる。
 #
-# ⚠️ `page.search_for` は**部分一致**（大文字小文字は区別しない）。英字だけの語は
-#    keyword_regex と同じ境界規則で確かめないと、「Fulfillment」の中の "llm" に当たる
-#    （U社 2025 p45 で実際に誤検出した語）。矩形の左右を少し広げて周囲の文字ごと取り出し、
-#    同じ正規表現で当たるかを見る。
-# ⚠️ 設定に依存しない（語とPDFだけで決まる）ので、キャッシュの鍵も (文書, ページ, 語) だけ。
+# 注意: `page.search_for` は部分一致（大文字小文字は区別しない）。英字だけの語は
+#       keyword_regex と同じ境界規則で確かめないと、「Fulfillment」の中の "llm" に当たる。
+#       矩形の左右を少し広げて周囲の文字ごと取り出し、同じ正規表現で当たるかを見る。
+# 注意: 設定に依存しない（語とPDFだけで決まる）ので、キャッシュの鍵も (文書, ページ, 語) だけ。
 _hits_cache: "OrderedDict[tuple, list]" = OrderedDict()
 HITS_CACHE_MAX = 400
 
@@ -492,9 +489,9 @@ def _word_rx(word: str) -> "re.Pattern":
 def _hit_in_texts(h: dict, groups: list[dict], texts: set) -> bool:
     """この矩形の出現は、いま見ている単位の文（texts）のものか。
 
-    同じブロックに**別の単位のヒット文**があると、ブロックの枠だけの判定では
-    隣の単位の同じ語まで光ってしまう（D社 2025 p104：ブロック2789に単位15と16）。
-    → 矩形の中心 → ブロック → 行 → 生テキスト内の文字位置 → 句点区切りで**文へ帰属**させる。
+    同じブロックに別の単位のヒット文があると、ブロックの枠だけの判定では
+    隣の単位の同じ語まで光ってしまう（1ブロックに2つの単位が乗ることがある）。
+    → 矩形の中心 → ブロック → 行 → 生テキスト内の文字位置 → 句点区切りで文へ帰属させる。
     """
     x0, y0, x1, y1 = h["rect"]
     cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
@@ -538,9 +535,9 @@ def _hit_in_texts(h: dict, groups: list[dict], texts: set) -> bool:
     return False
 
 
-# --- 表検出キャッシュの温め（2026-08-26） -------------------------------
+# --- 表検出キャッシュの温め -------------------------------------------------
 # L1編集（文の除外・結合など）の再解析は、表検出が時間の9割を占める（→ core._table_cache）。
-# 行キャッシュがディスクにあるうちは表検出が一度も走っていないので、**最初の編集だけ**約6秒かかる。
+# 行キャッシュがディスクにあるうちは表検出が一度も走っていないので、最初の編集だけ約6秒かかる。
 # → 確認モードで文書のカードを開いた時点で、裏のスレッドで温めておく（読んでいる数秒の間に終わる）。
 _primed: set[tuple] = set()
 _prime_lock = threading.Lock()
@@ -550,8 +547,8 @@ _prime_lock = threading.Lock()
 def api_prime(name):
     """この文書の表検出キャッシュを裏で温める。何度呼んでも1回しか走らない。
 
-    ⚠️ PyMuPDF はスレッドセーフでないので、リクエストと同じ Document は触らず
-       **専用に開き直す**。失敗しても何も壊れない（温まらず、最初の編集が遅いだけ）。
+    注意: PyMuPDF はスレッドセーフでないので、リクエストと同じ Document は触らず
+          専用に開き直す。失敗しても何も壊れない（温まらず、最初の編集が遅いだけ）。
     """
     st = load_settings(name)
     tsig = json.dumps([st.table_strategy, st.tables, st.table_off],
@@ -565,8 +562,8 @@ def api_prime(name):
 
     def run():
         try:
-            # ⚠️ 専用の Document でも、MuPDF の内部状態（フォント計測など）は共有される。
-            #    リクエストの解析と同時に走らせない（1ページごとにロックを譲る）
+            # 注意: 専用の Document でも、MuPDF の内部状態（フォント計測など）は共有される。
+            #       リクエストの解析と同時に走らせない（1ページごとにロックを譲る）
             with _pdf_lock:
                 d = pymupdf.open(path)
             for i in range(d.page_count):
@@ -586,7 +583,7 @@ def api_page_hits(name, pageno):
     """そのページにある検索語の矩形。確認モードが原本の上に語のハイライトを描くのに使う。
 
     `texts`（いま見ている単位の、このページの文）と `settings` を渡すと、
-    **その文に属する出現だけ**に絞って返す（→ `_hit_in_texts`）。無ければ全出現。
+    その文に属する出現だけに絞って返す（→ `_hit_in_texts`）。無ければ全出現。
     """
     body = request.get_json(silent=True) or {}
     words = sorted({w.strip() for w in (body.get("words") or []) if w and w.strip()})
@@ -615,7 +612,7 @@ def api_page_hits(name, pageno):
 
 
 # ページ一覧（全ページを解析するので 110ページで 6秒ほど）。同じ設定なら再計算しない。
-# ⚠️ これが走っている間は他のページの解析も待たされるので、キャッシュが効くことは体感に直結する
+# 注意: これが走っている間は他のページの解析も待たされるので、キャッシュが効くことは体感に直結する
 _pages_cache: "OrderedDict[tuple, list]" = OrderedDict()
 
 
@@ -640,10 +637,10 @@ def api_pages(name):
 
 @app.post("/api/doc/<name>/settings")
 def api_save_settings(name):
-    """設定JSONを保存する。**確認は出さず、前の版を `設定\\履歴\\` に退避してから上書きする。**
+    """設定JSONを保存する。確認は出さず、前の版を `設定\\履歴\\` に退避してから上書きする。
 
     設定を詰めている間は何度も保存することになるので、そのたびに確認を出すと
-    「毎回OKを押す」動作が身につき、**本当に確認したい書き出しのダイアログまで素通り**する。
+    「毎回OKを押す」動作が身につき、本当に確認したい書き出しのダイアログまで素通りする。
     → 確認ではなく、いつでも戻せるようにするほうを選んだ。
     """
     st = req_settings(name)
@@ -660,7 +657,7 @@ def api_save_settings(name):
 def api_export(name):
     """この1社ぶんを書き出す（確認用）。全社まとめは pdf2txt.py で作る。
 
-    **既にあるファイルは黙って上書きしない。** 設定を変えて書き出し、KH Coder で見て、
+    既にあるファイルは黙って上書きしない。設定を変えて書き出し、KH Coder で見て、
     また変えて…を繰り返すので、前の版を潰したかどうかが分からないと比較にならない。
     → 既存があれば 409 で知らせ、画面で「上書き／別名で残す／やめる」を選ばせる。
     """
@@ -678,7 +675,7 @@ def api_export(name):
 
     st = req_settings(name)
     rows = doc_rows(name, st)
-    pages = core.aggregate_pages(rows)   # ⚠️ PDFを読み直さない。2つのCSVを必ず一致させる
+    pages = core.aggregate_pages(rows)   # 注意: PDFを読み直さない。2つのCSVを必ず一致させる
     company, year = _parse_name(name)
 
     # KH Coder 用テキスト：<h1>文書</h1> ／ <h2>pN</h2> ／ 1行1文（→ core.kh_text）
@@ -725,7 +722,7 @@ def api_export(name):
 def api_download(name, kind):
     """書き出したファイルをそのままダウンロードさせる。
 
-    公開デモでは置き場がサーバー上の一時ディレクトリなので、**これが唯一の受け取り方**になる。
+    公開デモでは置き場がサーバー上の一時ディレクトリなので、これが唯一の受け取り方になる。
     """
     try:
         csv_p, page_p, txt_p = out_paths(name, (request.args.get("label") or "").strip())
@@ -739,7 +736,7 @@ def api_download(name, kind):
     return send_file(p, as_attachment=True, download_name=p.name)
 
 
-# --- 文脈窓（2026-08-22 夜に追加） -------------------------------------------
+# --- 文脈窓 -----------------------------------------------------------------
 
 def _ctx_args(body: dict) -> tuple[int, list[str]]:
     n = int(body.get("n", 2))
@@ -821,7 +818,7 @@ def api_context_download(name):
     return send_file(p, as_attachment=True, download_name=p.name)
 
 
-# --- 抽出単位（L2。2026-08-25 追加） -----------------------------------------
+# --- 抽出単位（L2） ---------------------------------------------------------
 
 def _doc_units(name: str, st: core.Settings, kws: list[str] | None):
     """1文書ぶんの抽出単位（キャッシュ経由）。一覧バッジ用のメタも更新する。"""
@@ -907,11 +904,11 @@ class XlsxLocked(Exception):
 def _write_units_xlsx(path, recs):
     """KH Coder に読ませる Excel（1行1単位＝1セル1ケース。テキスト列は「テキスト」）。
 
-    ⚠️ **openpyxl は使わない。** openpyxl 3.1系はワークシートへの参照を絶対パス
+    注意: openpyxl は使わない。openpyxl 3.1系はワークシートへの参照を絶対パス
     （`/xl/worksheets/sheet1.xml`）で書き、KH Coder の xlsx パーサ（相対パス前提）が
-    シートを見つけられずに落ちる（2026-08-25 に実際に落ちた。xlsx.pm line 481）。
+    シートを見つけられずに落ちる（xlsx.pm line 481）。
     xlsxwriter は Excel と同じ相対パス＋sharedStrings で書くので読める。
-    ⚠️ Excel／KH Coder で開いたままの xlsx には書けない（Windows のロック）→ XlsxLocked。
+    注意: Excel／KH Coder で開いたままの xlsx には書けない（Windows のロック）→ XlsxLocked。
     """
     import xlsxwriter
     try:
@@ -941,7 +938,7 @@ def api_units_download(name):
     return send_file(p, as_attachment=True, download_name=p.name)
 
 
-# --- 全文書横断（確認モード。2026-08-25） ---------------------------------
+# --- 全文書横断（確認モード） -----------------------------------------------
 
 def _load_groups() -> dict:
     """対象一覧.csv があれば 企業名_年度 → 群 の対応（pdf2txt.py と同じ）。"""
@@ -965,7 +962,7 @@ def api_conf(name):
                     "設定済み": conf_path(name).exists()})
 
 
-# --- ジョブ（時間のかかる処理はここを通す。2026-08-25 夜） --------------------
+# --- ジョブ（時間のかかる処理はここを通す） --------------------------------
 #
 # 「未解析の文書があると何十秒も無言で待たされる」を無くすための仕組み：
 #   POST /api/job {kind, ...} → 別スレッドで処理を始める（実行中は1つだけ）
@@ -976,8 +973,8 @@ def api_conf(name):
 #   table     … Excel プレビュー用の行と列
 #   export_all… 全冊書き出し（抽出単位.csv ／ KHCoder_抽出単位.xlsx ＋分割）
 #
-# ⚠️ ジョブの状態はプロセス内に持つ。公開デモも gunicorn -w 1（render.yaml）なので成立する。
-#    ワーカーを増やすなら、この仕組みを外に出さないといけない
+# 注意: ジョブの状態はプロセス内に持つ。公開デモも gunicorn -w 1（render.yaml）なので成立する。
+#       ワーカーを増やすなら、この仕組みを外に出さないといけない
 
 WARM_SCRIPT = Path(__file__).resolve().parent.parent / "warm_cache.py"
 # 並列数：extract_doc はGILに縛られるのでプロセスで分ける。1冊 数百MB 使うことがあるので
@@ -1058,10 +1055,6 @@ def _units_payload(name: str, kws) -> dict:
             "単位数": len(units),
             "採用数": sum(1 for u in units if not u["採用"]),
             "確認数": sum(1 for u in units if u.get("確認"))}
-
-
-# 🔴 「切り取りと除外」（境界の診断・自動提案・点検の記録）は 2026-08-31 に
-#    座標カットの廃止とともに削除した。経緯は 記録/2026-08-31.md と git 履歴。
 
 
 def _table_rows(names: list[str], kws, upd, errors: dict | None = None) -> list[dict]:
@@ -1161,11 +1154,10 @@ def _run_job(kind: str, params: dict):
             upd(add_total=len(names) + 5)
             result = _export_all(params.get("group_by") or None, kws, upd, errors)
         elif kind == "rates":
-            # 出現率（RQ1 の材料）：冊ごとの 総文数・ヒット文数・総ページ数・ヒットページ数と率。
-            # 🔴 分子・分母とも L1 の機械的検出＝確認モードの手作業（unit_excludes 等）は
-            #    影響しない（手作業で率が動くと、率の比較が手続きに依存してしまう。
-            #    → 検討_2026-08-25_抽出単位方式.md §1「RQ1 は L1 で数える」）。
-            #    絶対数と率の両方を出すのは、どちらで見ても結論が変わらないことを確認するため
+            # 出現率：冊ごとの 総文数・ヒット文数・総ページ数・ヒットページ数と率。
+            # 分子・分母とも L1 の機械的検出で数え、確認モードの手作業（unit_excludes 等）は
+            # 影響させない（手作業で率が動くと、率の比較が手続きに依存してしまうため）。
+            # 絶対数と率の両方を出すのは、どちらで見ても結論が変わらないことを確認するため
             upd(add_total=len(names))
             groups = _load_groups()
             rx = core.keyword_regex(kws or load_keywords())
@@ -1253,7 +1245,7 @@ PORT = 5000
 def already_running(port: int) -> bool:
     """⚠️ Windows では、使用中のポートにもう1つサーバーを立ててしまえる（SO_REUSEADDR）。
 
-    二重起動すると**古いほうがリクエストを受け続ける**ので、コードを直したのに
+    二重起動すると古いほうがリクエストを受け続けるので、コードを直したのに
     画面の挙動が変わらない、という嵌まり方をする（実際に嵌まった）。だから先に確かめる。
     """
     import socket
@@ -1263,15 +1255,15 @@ def already_running(port: int) -> bool:
 
 
 def to_log_if_no_console() -> Path | None:
-    """🔴 出力先が無いときは、ログファイルに逃がす。
+    """出力先が無いときは、ログファイルに逃がす。
 
     `pythonw.exe`（コンソールを持たない python）で起動すると、`sys.stdout` が
-    使えない状態になる。そこへ `print()` すると**例外が出てプロセスごと落ちる。**
-    実際これで `起動.vbs` が「押しても何も起きない」状態になっていた（2026-08-10）。
-    しかも**コンソールが無いのでエラーも見えない**、という最悪の組み合わせだった。
+    使えない状態になる。そこへ `print()` すると例外が出てプロセスごと落ちる。
+    実際これで、起動用のスクリプトが「押しても何も起きない」状態になっていた。
+    しかもコンソールが無いのでエラーも見えない、という最悪の組み合わせだった。
 
-    ⚠️ `sys.stdout is None` だけの判定では足りない。壊れたハンドルが入っていて、
-       書き込んだ瞬間に落ちる場合もある。→ **実際に書いてみて確かめる。**
+    注意: `sys.stdout is None` だけの判定では足りない。壊れたハンドルが入っていて、
+          書き込んだ瞬間に落ちる場合もある。→ 実際に書いてみて確かめる。
     """
     def usable(stream) -> bool:
         try:
@@ -1293,7 +1285,7 @@ def to_log_if_no_console() -> Path | None:
 
 
 if __name__ == "__main__":
-    log_path = to_log_if_no_console()      # ⚠️ 最初の print より前に呼ぶこと
+    log_path = to_log_if_no_console()      # 注意: 最初の print より前に呼ぶこと
     url = f"http://127.0.0.1:{PORT}/"
     quiet = "--no-browser" in sys.argv
 
@@ -1317,6 +1309,6 @@ if __name__ == "__main__":
         import webbrowser
         threading.Timer(1.2, lambda: webbrowser.open(url)).start()
 
-    # ⚠️ host は 127.0.0.1 のまま（明示しておく）。0.0.0.0 にすると同じWi-Fiの
-    #    他の端末から丸見えになる。この画面には認証が無いし、企業のPDFを扱う
+    # 注意: host は 127.0.0.1 のまま（明示しておく）。0.0.0.0 にすると同じWi-Fiの
+    #       他の端末から丸見えになる。この画面には認証が無いし、企業のPDFを扱う
     app.run(host="127.0.0.1", port=PORT, debug=False)

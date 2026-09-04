@@ -54,7 +54,7 @@ def test_keyword_regex_ascii_word_boundary():
 # ---------- Settings ----------
 
 def test_settings_ignores_unknown_keys():
-    # 古い設定JSONに未知のキー（2026-08-31 に廃止した座標カットなど）が残っていても
+    # 古い設定JSONに未知のキー（かつて持っていた座標カットの設定など）が残っていても
     # 読み込みは落ちず、黙って捨てられる
     s = core.Settings.from_dict({"footer_margin": 10, "header_y": 35, "obsolete_key": 1,
                                  "repeat_ratio": 0.4})

@@ -14,7 +14,7 @@ const S = {
 };
 
 const $ = (id) => document.getElementById(id);
-/** 線画アイコン（index.html のスプライトを参照）。必ず文字と組で使う → デザイン方針.md §2-3 */
+/** 線画アイコン（index.html のスプライトを参照）。必ず文字と組で使う。 */
 const ICON = (n) => `<svg class="ic" aria-hidden="true"><use href="#i-${n}"/></svg>`;
 const api = async (url, body) => {
   const r = await fetch(url, body ? {
@@ -22,8 +22,8 @@ const api = async (url, body) => {
     body: JSON.stringify(body),
   } : {});
   if (!r.ok) {
-    // ⚠️ 本文も一緒に投げる。書き出しの「既に同じファイルがあります」(409) は、
-    //    どのファイルがいつ書かれたかを画面で見せる必要がある
+    // 注意: 本文も一緒に投げる。書き出しの「既に同じファイルがあります」(409) は、
+    //       どのファイルがいつ書かれたかを画面で見せる必要がある
     const j = await r.json().catch(() => ({}));
     const err = new Error(j.error || r.statusText);
     err.status = r.status;
@@ -34,7 +34,6 @@ const api = async (url, body) => {
 };
 
 // 設定を入れる欄。id は p_<キー名> で統一してある
-// （header_y / footer_margin は 2026-08-31 に座標カットの廃止とともに撤去）
 const PARAMS = ["size_tol", "tiny_ratio", "join_gap",
                 "col_tol", "line_gap", "min_len", "body_size", "section_min_pt",
                 "repeat_ratio"];
@@ -44,8 +43,8 @@ const SEL_PARAMS = ["table_strategy"];                    // プルダウン
 // 種別。core.py の KINDS と同じ並び。⚠️ 片方だけ増やすと件数表示が合わなくなる
 const KINDS = ["本文", "大", "小", "極小", "表"];
 
-// ⚠️ 通信の失敗を握り潰さない。以前は api() が投げると unhandled rejection のままで、
-//    サーバーを落とした状態で操作しても「何も起きない」画面になっていた。
+// 注意: 通信の失敗を握り潰さない。以前は api() が投げると unhandled rejection のままで、
+//       サーバーを落とした状態で操作しても「何も起きない」画面になっていた。
 window.addEventListener("unhandledrejection", (e) => {
   toast("サーバーとのやり取りに失敗しました：" +
         ((e.reason && e.reason.message) || e.reason) +
@@ -70,7 +69,7 @@ function updateSelUI() {
 
 let DOCS = [];                       // /api/docs の結果。バッジが見る
 
-/** ホーム上部の進み具合と「次にやること」。何をすればいいかを一目で示す（2026-08-31 追加）。
+/** ホーム上部の進み具合と「次にやること」。何をすればいいかを一目で示す。
  *  done の数え方は確認モード（auDone）と同じ：✓確認済み または 除外済み。 */
 function renderHomeProg() {
   const box = $("homeProg");
@@ -105,10 +104,10 @@ async function loadDocs() {
   const last = localStorage.getItem("lastDoc");
   for (const d of docs) {
     const li = document.createElement("li");
-    // 抽出単位のバッジ：**ヒットの無い文書は開かなくてよい**と一覧で分かるようにする。
-    // 進み具合（確認＋除外／全単位）まで行ごとに出す（2026-08-31）。
-    // ⚠️ 列はグリッドで揃える（→ style.css .doclist li）。バッジを名前の後ろに流すと
-    //    行ごとに位置がバラけて読めない、という指摘があった（2026-08-25）
+    // 抽出単位のバッジ：ヒットの無い文書は開かなくてよいと一覧で分かるようにする。
+    // 進み具合（確認＋除外／全単位）まで行ごとに出す。
+    // 注意: 列はグリッドで揃える（→ style.css .doclist li）。バッジを名前の後ろに流すと、
+    //       行ごとに位置がバラけて読めなくなる
     const n = d["単位数"];
     const dEx = n == null ? 0 : n - (d["採用数"] ?? n);
     const dDone = n == null ? 0 : Math.min(n, (d["確認数"] || 0) + dEx);
@@ -234,13 +233,12 @@ async function _openDoc(name) {
   setCurrent(1);
   S.boxes[1].classList.add("cur");
   syncSaveState();
-  // ページ除外（表紙・目次の自動除外と手順チェックリスト）は 2026-08-31 に廃止。
-  // 分母は全ページ・全文で数える（→ core.extract_doc）
+  // ページ単位の除外は行わない。分母は全ページ・全文で数える（→ core.extract_doc）
 }
 
 // ---------- 未保存の管理 ----------
 // 除外・結合・種別・並べ替えは S.st に溜まるだけで、保存するまでJSONに残らない。
-// **初見の人が一番失いやすいのはここ**なので、状態を常に見せ、離脱時に警告する。
+// 初見の人が一番失いやすいのはここなので、状態を常に見せ、離脱時に警告する。
 
 const isDirty = () => !!S.name && JSON.stringify(S.st) !== S.saved;
 
@@ -275,7 +273,7 @@ document.addEventListener("keydown", (e) => {
 
 $("backBtn").onclick = () => {
   if (isDirty() && !confirm("保存していない設定があります。このまま選び直すと失われます。続けますか？")) return;
-  S.name = null;                 // ⚠️ 消し忘れると beforeunload が鳴り続ける
+  S.name = null;                 // 注意: 消し忘れると beforeunload が鳴り続ける
   S.saved = null;
   openTasks(false);
   openCtx(false);
@@ -298,12 +296,11 @@ $("backBtn").onclick = () => {
 };
 
 // ---------- 手動修正の一覧 ----------
-// ⚠️ ここは**卒論の付録そのもの**。「自動でやりました」では通らないので、
-//    どこを人が直したのかを全件、いつでも出せる形にしておく。
-// （以前はバッジを押すと右パネルの除外リストへ飛ぶだけで、除外が0件だと**何も起きなかった**）
+// 注意: ここが監査記録そのもの。どこを人が直したのかを全件、いつでも出せる形にしておく。
+// （バッジを押すと右パネルの除外リストへ飛ぶだけでは、除外が0件のときに何も起きない）
 
 // 1件のときに「まとめて」と言わない。日本語として不自然なだけでなく、
-// **1件しか選べていないことに気づかない**もとになる
+// 1件しか選べていないことに気づかないもとになる
 const bulkLabel = (n) => (n === 1 ? "理由を付ける…" : `${n}件にまとめて理由を付ける…`);
 const undoLabel = (n, one) => (n === 1 ? one : `まとめて${one}`);
 
@@ -313,7 +310,7 @@ S.selRec = {};
 
 /** 選ぶ・まとめて理由を付ける・まとめて取り消す、の共通の一覧。
  *
- * 除外・結合・種別・並べ替えの4つは、**どれも「なぜそうしたか」を残す**という点で同じもの。
+ * 除外・結合・種別・並べ替えの4つは、どれも「なぜそうしたか」を残すという点で同じもの。
  * 作りを1つにまとめてあるのは、片方だけ機能が増えて食い違うのを防ぐため。
  *
  * @param o {op, title, note, rules, label(r), page(r)}
@@ -327,7 +324,7 @@ function recordSection(o) {
 
   const sec = document.createElement("section");
   sec.className = "mansec";
-  // 理由の内訳を見出しに出す。**件数だけでは「乱暴なのか文書の性質なのか」が分からない**
+  // 理由の内訳を見出しに出す。件数だけでは「乱暴なのか文書の性質なのか」が分からない
   const by = {};
   for (const r of rules) by[r.reason || "未設定"] = (by[r.reason || "未設定"] || 0) + 1;
   const brk = Object.entries(by).map(([k, v]) => `${k} ${v}`).join(" ／ ");
@@ -379,7 +376,7 @@ function recordSection(o) {
     if (!bulk.value) return;
     for (const r of sel) r.reason = bulk.value === "—" ? "" : bulk.value;
     S.selRec[o.op] = new Set();
-    syncSaveState(); showManual();     // ⚠️ 理由は抽出結果を変えないので refresh は要らない
+    syncSaveState(); showManual();     // 注意: 理由は抽出結果を変えないので refresh は要らない
   };
   bar.appendChild(bulk);
   sec.appendChild(bar);
@@ -432,8 +429,8 @@ function reasonNote(op, key) {
 
 /** 前処理の記録パネルの開閉。
  *
- * ⚠️ **モーダルにしない。** 最初モーダルで作ったが、原本を見ながら理由を選ぶという
- *    本来の作業ができなかった。列を足して横に並べる（覆わない）。
+ * 注意: モーダルにしない。最初モーダルで作ったが、原本を見ながら理由を選ぶという
+ *       本来の作業ができなかった。列を足して横に並べる（覆わない）。
  */
 function openTasks(on) {
   const show = on === undefined ? $("taskPane").hidden : on;
@@ -453,12 +450,12 @@ function showManual() {
                 (st.tables || []).length + (st.table_off || []).length +
                 (st.unit_excludes || []).length + (st.unit_merges || []).length;
 
-  // 手順チェックリスト（TASKS）と除外ページの一覧は 2026-08-31 に撤去（ページ除外の廃止）。
-  // 過去に記録した skip_pages・task_states は設定JSONに残っており、付録として読める
+  // 手順チェックリスト（TASKS）と除外ページの一覧は出さない（ページ除外を適用しないため）。
+  // 過去に記録した skip_pages・task_states は設定JSONに残っており、記録として読める
 
   wrap.appendChild(el(`<h3 class="manh">この文書で手を入れた箇所</h3>
     <p class="note">自動判定を手で直した箇所が<b>すべて</b>ここに出ます（合計 <b>${total}件</b>）。
-    そのまま設定JSONに残り、卒論の付録になります。<br>
+    そのまま設定JSONに残り、監査記録になります。<br>
     <b>件数だけでは説明になりません。</b>「結合30件のうち28件が段またぎ」まで言えて初めて、
     レイアウト由来であって恣意的な操作ではないと示せます。理由を付けてください。<br>
     増えすぎたら、1件ずつ直すより<b>設定のほうを見直してください</b>。</p>`));
@@ -468,7 +465,7 @@ function showManual() {
     note: "リンク表記・ロゴ・ページ表記など、明らかに文書の記述でないもの。"
         + "「この語を分析に入れたくない」は KH Coder 側でやること",
     page: (r) => r.page,
-    // ⚠️ pt まで同じルールが他にもあるときは、座標を出さないと見分けられない
+    // 注意: pt まで同じルールが他にもあるときは、座標を出さないと見分けられない
     label: (r) => (r.pt ? `${r.pt}pt ` : "")
       + (dupRules(st.excluded, r) && r.at ? `x${Math.round(r.at[0])} ` : "")
       + cut(r.text, 54),
@@ -517,7 +514,7 @@ function showManual() {
   for (const k of ["unit_excludes", "unit_merges"]) st[k] = st[k] || [];
   wrap.appendChild(el(`<h3 class="manh">抽出単位（L2）の手作業</h3>
     <p class="note">「抽出」タブで、生成AI関連語のヒット箇所を単位化するときに手を入れた箇所。
-    件数と理由の内訳が、そのまま卒論3.5節の監査記録になります。</p>`));
+    件数と理由の内訳が、そのまま監査記録になります。</p>`));
   wrap.appendChild(recordSection({
     op: "unit_excludes", title: "抽出から外したヒット", rules: st.unit_excludes,
     note: "商標注記・誤ヒットなど、内容の記述でないもの。<b>迷ったら外さない</b>（外した件数と理由は全部開示する）",
@@ -529,8 +526,8 @@ function showManual() {
     page: (r) => r.page, label: (r) => `${cut(r.hit, 30)} ＋${(r.add || []).length}文`,
   }));
 
-  // ⚠️ 一括で戻すのは「パラメータを詰め直したら、手で直した箇所が全部ズレた」ときのため。
-  //    個別に戻すボタンを何十回も押させないための逃げ道であって、ふだん使うものではない。
+  // 注意: 一括で戻すのは「パラメータを詰め直したら、手で直した箇所が全部ズレた」ときのため。
+  //       個別に戻すボタンを何十回も押させないための逃げ道であって、ふだん使うものではない。
   if (total) {
     const b = document.createElement("button");
     b.className = "danger ghost mini resetall";
@@ -546,14 +543,14 @@ function showManual() {
   body.scrollTop = keep;
 
   $("taskCount").textContent = "";
-  S.taskSig = taskSig();       // ⚠️ どの経路から描いても控える（描き忘れの判定に使う）
+  S.taskSig = taskSig();       // 注意: どの経路から描いても控える（描き忘れの判定に使う）
 }
 $("manBadge").onclick = () => openTasks();
 
 /** 手で直した箇所（除外・結合・種別・並べ替え）をまとめて自動判定に戻す。
  *
- * ⚠️ パラメータと除外ページには触らない。⚙ の「既定値に戻す」とは別物。
- *    こちらは「人の判断」だけを消し、あちらは「設定そのもの」を初期化する。
+ * 注意: パラメータと除外ページには触らない。⚙ の「既定値に戻す」とは別物。
+ *       こちらは「人の判断」だけを消し、あちらは「設定そのもの」を初期化する。
  */
 function resetManual() {
   const st = S.st;
@@ -764,7 +761,7 @@ function observe() {
   if (ioCurrent) ioCurrent.disconnect();
 
   // 画面の前後400pxぶんだけ読み込む／出たら捨てる
-  // ⚠️ ここを広げるほど「先読みされていて快適」だが、一度に走るリクエストが増えて逆に遅くなる
+  // 注意: ここを広げるほど「先読みされていて快適」だが、一度に走るリクエストが増えて逆に遅くなる
   ioLoad = new IntersectionObserver((ents) => {
     for (const e of ents) {
       const n = Number(e.target.dataset.page);
@@ -862,18 +859,18 @@ function refresh() {
 
 /** 設定が変わったら、開いている記録パネルも描き直す。
  *
- * ⚠️ **ここを refresh() に入れるのが肝。** 除外・結合・種別・並べ替えはどれも refresh() を
- *    通るので、1か所で全部の反映を賄える。個々の操作から showManual() を呼ぶ形にしていた
- *    ときは、**呼び忘れた操作だけ画面に出ない**（開き直すまで気づけない）状態になっていた。
+ * 注意: ここを refresh() に入れるのが肝。除外・結合・種別・並べ替えはどれも refresh() を
+ *       通るので、1か所で全部の反映を賄える。個々の操作から showManual() を呼ぶ形にしていた
+ *       ときは、呼び忘れた操作だけ画面に出ない（開き直すまで気づけない）状態になっていた。
  *
- * ⚠️ 理由のメモを入力している最中だけは描き直さない。作り直すと入力欄のフォーカスが飛ぶ。
+ * 注意: 理由のメモを入力している最中だけは描き直さない。作り直すと入力欄のフォーカスが飛ぶ。
  */
 function redrawTasks() {
   if ($("taskPane").hidden) return;
   const a = document.activeElement;
   if (a && a.classList && a.classList.contains("tmemo")) return;
-  // ⚠️ パラメータをスライダーで動かすと refresh() が連続で走る。記録の中身が変わって
-  //    いないときまで作り直すと、行数の多い文書でカクつくので、変化したときだけ描く
+  // 注意: パラメータをスライダーで動かすと refresh() が連続で走る。記録の中身が変わって
+  //       いないときまで作り直すと、行数の多い文書でカクつくので、変化したときだけ描く
   if (taskSig() === S.taskSig) return;
   showManual();
 }
@@ -931,7 +928,7 @@ function drawOverlay(n) {
     e.style.width = pct(t.bbox[2] - t.bbox[0] + 4, d.width);
     e.style.height = pct(t.bbox[3] - t.bbox[1] + 4, d.height);
     e.title = `表${i + 1}（${t.manual ? "手で指定" : "自動検出"}・${t.strategy}）`;
-    // ⚠️ この関数の中では `el` がページの箱（DOM）を指しているので、ヘルパの el() は使えない
+    // 注意: この関数の中では `el` がページの箱（DOM）を指しているので、ヘルパの el() は使えない
     const no = document.createElement("span");
     no.className = "tno";
     no.textContent = `表${i + 1}`;
@@ -970,11 +967,11 @@ function drawOverlay(n) {
   drawPick(ov, d, n);
 }
 
-/** 囲んで選んだブロックの印と、操作バー。**枠を描いた後に呼ぶ**（印を上書きされないため）。 */
+/** 囲んで選んだブロックの印と、操作バー。枠を描いた後に呼ぶ（印を上書きされないため）。 */
 function drawPick(ov, d, n) {
   if (!S.pick || S.pick.page !== n) return;
   const gs = d.groups.filter((g) => g.units.length && S.pick.keys.has(g.parts[0]));
-  // ⚠️ パラメータを変えるとブロックの切れ方が変わり、選択が指し先を失う。黙って残さない
+  // 注意: パラメータを変えるとブロックの切れ方が変わり、選択が指し先を失う。黙って残さない
   if (gs.length < 2) { S.pick = null; return; }
 
   let bb = gs[0].bbox.slice();
@@ -1024,7 +1021,7 @@ function hl(gid, on) {
   if (g) g.style.borderColor = on ? "var(--accent)" : "";
 }
 
-// ---------- サムネイル一覧（2026-08-22 追加） ----------
+// ---------- サムネイル一覧 ----------
 // 長い文書（最大400ページ超）で「今どのあたりか」を掴み、一発で飛ぶためのもの。
 // ページ画像と同じ endpoint を小さい zoom で呼ぶ（サーバー側のキャッシュは zoom 別）。
 // 見えている範囲だけ読み込む（ページ本体と同じ作り）。畳めて、畳んだ状態は覚えておく。
@@ -1054,8 +1051,8 @@ function buildThumbs() {
       if (t.dataset.loaded === "1") continue;
       t.dataset.loaded = "1";
       const img = document.createElement("img");
-      // ⚠️ loading="lazy" は付けない。DOMに入れる前の img は画面に無いので永遠に読まれない
-      //    （見えている範囲だけ読む制御は、上の IntersectionObserver がやっている）
+      // 注意: loading="lazy" は付けない。DOMに入れる前の img は画面に無いので永遠に読まれない
+      //       （見えている範囲だけ読む制御は、上の IntersectionObserver がやっている）
       img.decoding = "async";
       img.alt = `p.${t.dataset.page}`;
       img.src = `/api/doc/${encodeURIComponent(S.name)}/page/${t.dataset.page}.jpg?zoom=${THUMB_ZOOM}`;
@@ -1066,7 +1063,7 @@ function buildThumbs() {
   }, { root: $("thumbs"), rootMargin: "600px 0px" });
   for (const t of wrap.children) ioThumb.observe(t);
   markThumbs();
-  // 前回のタブを復元（無ければ抽出。この道具の主目的は抽出になった。2026-08-25）
+  // 前回のタブを復元（無ければ抽出。この道具の主目的が抽出のため）
   let tab = "units";
   try { tab = localStorage.getItem("sbTab") || "units"; } catch (e) { /* noop */ }
   if (!SB_TABS[tab]) tab = "units";
@@ -1076,7 +1073,7 @@ function buildThumbs() {
   collapseSidebar(!open);
 }
 
-/** 表あり・現在ページ・ヒット数 の印を付け直す（除外・候補の印は 2026-08-31 に撤去）。 */
+/** 表あり・現在ページ・ヒット数 の印を付け直す。 */
 function markThumbs() {
   const tbl = new Set((S.pages || []).filter((r) => r["表数"] > 0).map((r) => r["ページ"]));
   for (const t of $("thumbList").children) {
@@ -1108,7 +1105,7 @@ function drawUnits(d) {
   wrap.innerHTML = "";
   wrap.classList.add("fadein");
 
-  // ページ除外は 2026-08-31 に廃止：全ページが書き出しの対象（分母は全ページ・全文）
+  // 全ページが書き出しの対象（ページ除外は適用しない。分母は全ページ・全文）
   wrap.classList.remove("skipped");
 
   let shown = 0;                    // 表示した（単位を持つ）ブロックの数。先頭判定に使う
@@ -1153,9 +1150,9 @@ function drawUnits(d) {
       b.className = "j";
       b.innerHTML = ICON("up") + "上と結合";
       b.title = "ひとつ上のブロックの続きとして繋ぎます（句点を挟まず1文になります）";
-      // ⚠️ キーは必ず parts の端を使う。結合ルールはサーバー側で**結合前の生text**に対して
-      //    照合されるので、g.raw（連結済み）を渡すとどのブロックにも当たらず、
-      //    押しても何も起きない。既に結合済みのブロック同士を繋ぐときに露見した
+      // 注意: キーは必ず parts の端を使う。結合ルールはサーバー側で結合前の生textに対して
+      //       照合されるので、g.raw（連結済み）を渡すとどのブロックにも当たらず、
+      //       押しても何も起きない。既に結合済みのブロック同士を繋ぐときに露見した
       b.onclick = () => join(prev.parts[prev.parts.length - 1], g.parts[0]);
       head.appendChild(b);
     }
@@ -1179,9 +1176,9 @@ function drawUnits(d) {
     wrap.appendChild(div);
   }
 
-  // ⚠️ 当たらなかった除外ルールも黙って無視される。
-  //    照合は 文言＋ページ＋pt＋位置 なので、パラメータを変えて切れ方が変わると外れる。
-  //    **気づけないと「除外したはずのものが出力に残ったまま」分析へ進んでしまう。**
+  // 注意: 当たらなかった除外ルールも黙って無視される。
+  //       照合は 文言＋ページ＋pt＋位置 なので、パラメータを変えて切れ方が変わると外れる。
+  //       気づけないと「除外したはずのものが出力に残ったまま」分析へ進んでしまう。
   const badEx = d["未適用の除外"] || [];
   if (badEx.length) {
     const w = document.createElement("div");
@@ -1197,8 +1194,8 @@ function drawUnits(d) {
       const b = document.createElement("button");
       b.className = "x back";
       b.textContent = "ルールを外す";
-      // ⚠️ サーバーから返ってきた r は複製なので、識別ではなく値で比べる。
-      //    位置は「両方無い／両方同じ」の厳密一致（atEq は片方が無いと真になるので使えない）
+      // 注意: サーバーから返ってきた r は複製なので、識別ではなく値で比べる。
+      //       位置は「両方無い／両方同じ」の厳密一致（atEq は片方が無いと真になるので使えない）
       b.onclick = () => {
         const key = JSON.stringify([r.page, r.text, r.pt ?? null, r.at ?? null]);
         S.st.excluded = (S.st.excluded || []).filter(
@@ -1211,8 +1208,8 @@ function drawUnits(d) {
     wrap.prepend(w);
   }
 
-  // ⚠️ 当たらなかった結合ルールは黙って無視されるので、必ず知らせる。
-  //    パラメータを変えるとブロックの切れ方が変わり、保存済みのルールが外れることがある
+  // 注意: 当たらなかった結合ルールは黙って無視されるので、必ず知らせる。
+  //       パラメータを変えるとブロックの切れ方が変わり、保存済みのルールが外れることがある
   const bad = d["未適用の結合"] || [];
   if (bad.length) {
     const w = document.createElement("div");
@@ -1239,7 +1236,7 @@ function drawUnits(d) {
     wrap.prepend(w);
   }
 
-  // ⚠️ 当たらなかった分割ルールも同じ（黙って効かないのが一番まずい）
+  // 注意: 当たらなかった分割ルールも同じ（黙って効かないのが一番まずい）
   const badSp = d["未適用の分割"] || [];
   if (badSp.length) {
     const w = document.createElement("div");
@@ -1277,7 +1274,7 @@ function drawUnits(d) {
     wrap.appendChild(e);
   }
 
-  // 落ちた行＝柱（反復）だけ。座標カットは 2026-08-31 に廃止した
+  // 落ちた行＝柱（反復）だけ。座標によるヘッダー／フッターの切り取りは行わない
   const dropped = d.lines.filter((l) => l.dropped);
   if (dropped.length) {
     const div = document.createElement("div");
@@ -1303,8 +1300,8 @@ function drawUnits(d) {
 // reading_order（列→上から）は機械的な規則でしかないので、回り込みのある図解ページなどでは
 // まだ崩れる。レイアウトの意図は座標だけからは復元できない → 人が並べ替えて、それを残す。
 //
-// ⚠️ 並べ替えはサーバー側で**結合（joins）より前**に効く。結合は「隣り合うブロック」を
-//    繋ぐ操作なので、順序を決めてから結合を指定するのが正しい順番。
+// 注意: 並べ替えはサーバー側で結合（joins）より前に効く。結合は「隣り合うブロック」を
+//       繋ぐ操作なので、順序を決めてから結合を指定するのが正しい順番。
 
 let dragEl = null, orderBefore = null;
 
@@ -1312,9 +1309,9 @@ const hasManualOrder = (page) =>
   (S.st.manual_order || []).some((r) => r.page === page);
 
 // 掴んだまま端に寄せるとリストが送られる。
-// ⚠️ **`dragover` だけでは足りない。** あのイベントはポインタが動いたときにしか来ないので、
-//    端で止めて待っていても何も起きない（＝1画面分より遠くへは運べない）。
-//    → ドラッグ中は requestAnimationFrame で回し続け、最後のポインタ位置を見て送る。
+// 注意: `dragover` だけでは足りない。あのイベントはポインタが動いたときにしか来ないので、
+//       端で止めて待っていても何も起きない（＝1画面分より遠くへは運べない）。
+//       → ドラッグ中は requestAnimationFrame で回し続け、最後のポインタ位置を見て送る。
 const EDGE = 70;        // 上下の端からこの範囲(px)に入ったら送り始める
 const SPEED = 18;       // 1フレームあたりの最大送り量(px)
 let dragY = 0, scrollRaf = null;
@@ -1383,7 +1380,7 @@ function dropTarget(wrap, y) {
 /** 掴んでいるブロックを、いまのポインタ位置に合う場所へ入れ直す。 */
 function placeDragged(y) {
   const wrap = $("unitList");
-  // ⚠️ 末尾には「座標で捨てた行」のリストが居るので、appendChild ではその後ろに回ってしまう
+  // 注意: 末尾には「座標で捨てた行」のリストが居るので、appendChild ではその後ろに回ってしまう
   const target = dropTarget(wrap, y) || wrap.querySelector(".drop-list");
   if (target) wrap.insertBefore(dragEl, target);
   else wrap.appendChild(dragEl);
@@ -1397,7 +1394,7 @@ $("unitList").addEventListener("dragover", (e) => {
   placeDragged(e.clientY);
 });
 // リストの外（ページ画像の上など）へ出ても位置は追い続ける。
-// ⚠️ 追わないと、外へ出た瞬間に自動スクロールが止まって「端まで運べない」感じになる
+// 注意: 追わないと、外へ出た瞬間に自動スクロールが止まって「端まで運べない」感じになる
 document.addEventListener("dragover", (e) => { if (dragEl) dragY = e.clientY; });
 $("unitList").addEventListener("drop", (e) => e.preventDefault());
 
@@ -1416,12 +1413,12 @@ $("ordReset").onclick = () => {
   refresh();
 };
 
-// ---------- ページ上でドラッグして範囲選択（2026-08-13 追加） ----------
+// ---------- ページ上でドラッグして範囲選択 ----------
 // 図解ページは並べ替える数が多く、右パネルで1つずつ動かすのが現実的でない
-// （p6 の図では 20ブロック超）。→ **原本の上でまとめて囲んで、一気に並べる。**
+// （図解ページでは 20ブロックを超える）。→ 原本の上でまとめて囲んで、一気に並べる。
 //
-// ⚠️ 囲んで「消す」機能にはしていない。除外は1件ずつ理由を付ける操作なので、
-//    まとめてやれると雑になる（→ README「ここで消すもの／消さないもの」）。
+// 注意: 囲んで「消す」機能にはしていない。除外は1件ずつ理由を付ける操作なので、
+//       まとめてやれると雑になる（→ README「ここで消すもの／消さないもの」）。
 
 S.pick = null;         // {page, keys:Set<結合前の生text>} 選んでいるブロック
 
@@ -1438,10 +1435,10 @@ const toPdf = (box, d, l, t, w, h) => [
 
 /** 選んだブロックを読み順に並べる。
  *
- * ⚠️ **core.reading_order と同じ規則を JS でもう一度書いている。** ふだんなら避けるが、
- *    ここで出すのは「並べ替えの結果」＝ `manual_order` に焼き付く**データ**であって、
- *    サーバーが後から計算し直すものではない。だから二重実装によるズレは起きない。
- *    （x方向の隙間で列に切り、列を左から、列の中は上から。COL_GAP_RATIO = 0.06）
+ * 注意: core.reading_order と同じ規則を JS でもう一度書いている。ふだんなら避けるが、
+ *       ここで出すのは「並べ替えの結果」＝ `manual_order` に焼き付くデータであって、
+ *       サーバーが後から計算し直すものではない。だから二重実装によるズレは起きない。
+ *       （x方向の隙間で列に切り、列を左から、列の中は上から。COL_GAP_RATIO = 0.06）
  */
 function readingSort(gs, pageWidth) {
   if (gs.length < 2) return gs.slice();
@@ -1455,7 +1452,7 @@ function readingSort(gs, pageWidth) {
     col(a) - col(b) || a.bbox[1] - b.bbox[1] || a.bbox[0] - b.bbox[0]);
 }
 
-/** 選んだブロックを1か所に集める。**最初の1つが居た位置**へ、読み順で詰める。
+/** 選んだブロックを1か所に集める。最初の1つが居た位置へ、読み順で詰める。
  *  @return {all, out, chosen} 並べ替え後の列／選択が無ければ null
  */
 function gatherOrder() {
@@ -1487,7 +1484,7 @@ function clearPick() {
   if (n) drawOverlay(n);
 }
 
-// ---------- 表（2026-08-22 追加） ----------
+// ---------- 表 ----------
 // 罫線で区切られた表は自動で「行ごと1ブロック」になる（→ core.find_page_tables）。
 // ここにあるのは、その自動判定を人が足し引きする操作。どちらも設定JSONに残る。
 //   ・▦ 表にする         … 囲んだ範囲を表として扱う（罫線の無い表。文字の位置で列を推定）
@@ -1547,7 +1544,7 @@ function drawTableCtl(d) {
 // ページ画像の上でドラッグ。⚠️ ガイド線（.gh/.gf）は .ov の外にあるので競合しない
 $("pages").addEventListener("mousedown", (e) => {
   if (e.button !== 0 || !e.target.closest) return;
-  // ⚠️ 操作バーは .ov の中にある。除かないと、ボタンを押しただけで選択がやり直しになる
+  // 注意: 操作バーは .ov の中にある。除かないと、ボタンを押しただけで選択がやり直しになる
   if (e.target.closest(".pickbar")) return;
   const ov = e.target.closest(".ov");
   if (!ov) return;
@@ -1562,7 +1559,7 @@ $("pages").addEventListener("mousedown", (e) => {
   let moved = false, hit = [];
 
   const move = (ev) => {
-    // ⚠️ 数px の揺れでバンドを出さない。出すと、枠をクリックしただけで選択が始まる
+    // 注意: 数px の揺れでバンドを出さない。出すと、枠をクリックしただけで選択が始まる
     if (!moved && Math.abs(ev.clientX - x0) + Math.abs(ev.clientY - y0) < 5) return;
     if (!moved) { moved = true; ov.appendChild(band); }
     const box = ov.getBoundingClientRect();
@@ -1574,7 +1571,7 @@ $("pages").addEventListener("mousedown", (e) => {
     band.style.height = pct(h, box.height);
     hit = pickGroups(d, toPdf(box, d, l, t, w, h));
     band.textContent = hit.length ? `${hit.length}ブロック` : "";
-    // 何が入るのかを離す前に見せる。**離してから違ったと分かるのでは選び直しが増える**
+    // 何が入るのかを離す前に見せる。離してから違ったと分かるのでは選び直しが増える
     const gids = new Set(hit.map((g) => g.gid));
     ov.querySelectorAll(".box").forEach(
       (b) => b.classList.toggle("picked", gids.has(Number(b.dataset.gid))));
@@ -1587,7 +1584,7 @@ $("pages").addEventListener("mousedown", (e) => {
     if (!moved) return;
     S.pick = hit.length >= 2
       ? { page: n, keys: new Set(hit.map((g) => g.parts[0])) } : null;
-    // ⚠️ 直後の click を1回だけ潰す。潰さないと、枠のクリック（その単位へ飛ぶ）が走る
+    // 注意: 直後の click を1回だけ潰す。潰さないと、枠のクリック（その単位へ飛ぶ）が走る
     document.addEventListener("click", (c) => { c.stopPropagation(); c.preventDefault(); },
                               { capture: true, once: true });
     drawOverlay(n);
@@ -1600,8 +1597,8 @@ $("pages").addEventListener("mousedown", (e) => {
 // ---------- 種別（本文／大／小／極小）を手で直す ----------
 // 種別はフォントptから機械的に決めているが、見出しが本文と同じptだったり、
 // 図解の説明文が本文より少し小さかったりして外れる。
-// ⚠️ SIZE_TOL を動かして直そうとしないこと。文書全体に効くので、1ブロックのために
-//    全体の判定を崩すことになる。→ そのブロックだけを名指しで直す。
+// 注意: SIZE_TOL を動かして直そうとしないこと。文書全体に効くので、1ブロックのために
+//       全体の判定を崩すことになる。→ そのブロックだけを名指しで直す。
 
 function kindPicker(g) {
   const frag = document.createDocumentFragment();
@@ -1633,12 +1630,12 @@ function kindPicker(g) {
 
 function setKind(g, kind) {
   const key = g.parts[0];        // 結合したブロックでも、種別を決めているのは先頭
-  // ⚠️ 位置も**先頭パーツのもの**を使う。サーバー側の照合が結合前のブロックに対して
-  //    行われるため（→ core.py「ブロックを1つだけ名指しするための鍵」）
+  // 注意: 位置も先頭パーツのものを使う。サーバー側の照合が結合前のブロックに対して
+  //       行われるため（→ core.py「ブロックを1つだけ名指しするための鍵」）
   const at = g.part_boxes[0];
   const same = (r) => r.page === S.page && r.text === key && atEq(r.at, at);
-  // ⚠️ 種別を選び直すたびにルールを作り直すので、**付けてあった理由を引き継ぐ**
-  //    （引き継がないと、種別を直すたびに理由が消えて記録が虫食いになる）
+  // 注意: 種別を選び直すたびにルールを作り直すので、付けてあった理由を引き継ぐ
+  //       （引き継がないと、種別を直すたびに理由が消えて記録が虫食いになる）
   const was = (S.st.kinds || []).find(same);
   S.st.kinds = (S.st.kinds || []).filter((r) => !same(r));
   // 自動判定と同じものを選んだら、指定を消すだけ（＝余計なルールを残さない）
@@ -1650,8 +1647,8 @@ function setKind(g, kind) {
 }
 
 /** 単位1つぶんの行。
- *  ⚠️ ブロックごと渡すのは、除外ルールが**文言＋ページ＋pt＋位置**で照合されるため。
- *     同じページに同じ文言・同じptのブロックが複数ある（A社 p11 の `KPI` ×3）。 */
+ *  注意: ブロックごと渡すのは、除外ルールが文言＋ページ＋pt＋位置で照合されるため。
+ *        同じページに同じ文言・同じptのブロックが複数あることがある。 */
 function unitRow(u, g) {
   const row = document.createElement("div");
   row.className = "u" + (u.excluded ? " ex" : "");
@@ -1693,7 +1690,7 @@ function exclude(texts, page, pt, bbox) {
   const at = atOf(bbox);
   for (const text of texts) {
     // 既存ルールで既に消えている単位は増やさない。
-    // ⚠️ pt / 位置 を持たない古いルールはその条件を問わず効くので、当たっていれば重複扱い
+    // 注意: pt / 位置 を持たない古いルールはその条件を問わず効くので、当たっていれば重複扱い
     const dup = S.st.excluded.some((r) => r.text === text &&
       (r.page === null || r.page === page) &&
       (r.pt === null || r.pt === undefined || r.pt === pt) &&
@@ -1733,9 +1730,9 @@ function unjoin(parts) {
   refresh();
 }
 
-/** 除外を取り消す。**その単位に実際に効いているルールだけ**を外す。
- *  ⚠️ pt / 位置 を持たない古いルールはその条件を問わず効いているので、一緒に外す
- *     （残すと「戻したのに消えたまま」になる）。 */
+/** 除外を取り消す。その単位に実際に効いているルールだけを外す。
+ *  注意: pt / 位置 を持たない古いルールはその条件を問わず効いているので、一緒に外す
+ *        （残すと「戻したのに消えたまま」になる）。 */
 function unexclude(text, page, pt, bbox) {
   const at = atOf(bbox);
   S.st.excluded = (S.st.excluded || []).filter((r) => !(
@@ -1758,7 +1755,7 @@ function drawExcluded() {
             (S.st.kinds || []).length + (S.st.manual_order || []).length +
             (S.st.tables || []).length + (S.st.table_off || []).length +
             (S.st.unit_excludes || []).length + (S.st.unit_merges || []).length;
-  // 手順チェックリストは 2026-08-31 に撤去（ページ除外の廃止）。バッジは手直し件数だけ
+  // 手順チェックリストは持たない（ページ除外を適用しないため）。バッジは手直し件数だけ
   $("manCnt").textContent = "";
   $("manBadge").title = "手で直した箇所" + (n ? `\n手直し ${n}件` : "");
   $("manBadge").classList.remove("todo");
@@ -1767,8 +1764,8 @@ function drawExcluded() {
   for (const r of list) {
     const row = document.createElement("div");
     row.className = "exrow";
-    // ⚠️ pt を出さないと、同じ文言のルールが2つ並んだとき見分けられない。
-    //    ptまで同じものがある場合（A社 p11 の `KPI` ×3）は座標も出す
+    // 注意: pt を出さないと、同じ文言のルールが2つ並んだとき見分けられない。
+    //       ptまで同じものがある場合は座標も出す
     row.innerHTML = `<span class="scope ${r.page === null ? "g" : ""}">` +
       `${r.page === null ? "全ページ" : "p." + r.page}</span>` +
       (r.pt ? `<span class="scope pt">${r.pt}pt</span>` : "") +
@@ -1778,7 +1775,7 @@ function drawExcluded() {
     const b = document.createElement("button");
     b.className = "x back";
     b.textContent = "戻す";
-    // ⚠️ **このルールだけ**を外す。条件で絞ると、位置違いの同じ文言まで巻き添えになる
+    // 注意: このルールだけを外す。条件で絞ると、位置違いの同じ文言まで巻き添えになる
     b.onclick = () => {
       S.st.excluded = (S.st.excluded || []).filter((x) => x !== r);
       refresh();
@@ -1793,8 +1790,6 @@ const dupRules = (list, r) => list.some((x) =>
   x !== r && x.text === r.text && x.page === r.page && x.pt === r.pt);
 
 const esc = (s) => s.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
-
-// 🔴 ヘッダー／フッターの境界線（ドラッグ）は 2026-08-31 に座標カットの廃止とともに撤去した。
 
 // ---------- ページ操作 ----------
 
@@ -1818,7 +1813,7 @@ $("zoom").oninput = () => {
   document.documentElement.style.setProperty("--pagew", $("zoom").value + "px");
 };
 $("zoom").onchange = () => refresh();        // 幅が決まってから画像を取り直す
-// ⚠️ 並び順を変えると「隣り合うブロック」が変わるので、結合（joins）の効き方も変わる
+// 注意: 並び順を変えると「隣り合うブロック」が変わるので、結合（joins）の効き方も変わる
 $("order").onchange = () => { S.st.order = $("order").value; refresh(); };
 $("showBoxes").onchange = () => Object.keys(S.cache).forEach((n) => drawOverlay(Number(n)));
 $("dimDropped").onchange = () => Object.keys(S.cache).forEach((n) => drawOverlay(Number(n)));
@@ -1841,7 +1836,7 @@ $("helpBtn").onclick = () => modal("この画面でできること", el(`<div cl
   <h4>ページを見て回る</h4>
   <p><b>一覧</b>（<kbd>T</kbd>）で左にサムネイル。表のあるページは下線。
     <kbd>←</kbd> <kbd>→</kbd> でもページを移動できます。
-    （ページ除外とヘッダー・フッターの座標カットは 2026-08-31 に廃止しました。
+    （ページ単位の除外もヘッダー・フッターの座標カットも行いません。
     捨てるのは柱＝反復行だけで、混ざったヒットは確認モードで理由を付けて外します）</p>
   <h4>ブロック（右の一覧）</h4>
   <p><b>⠿</b> を掴んで並べ替え（端に寄せると自動で送ります）／ プルダウンで<b>種別</b>を直す ／
@@ -1863,7 +1858,7 @@ $("helpBtn").onclick = () => modal("この画面でできること", el(`<div cl
   <h4>キー</h4>
   <p><kbd>←</kbd> <kbd>→</kbd> ページ移動 ／ <kbd>T</kbd> サムネイル ／ <kbd>F</kbd> 文脈窓 ／ <kbd>Ctrl</kbd>+<kbd>S</kbd> 保存 ／ <kbd>Esc</kbd> 選択・パネルを閉じる</p>
   <h4>記録（ヘッダー）</h4>
-  <p>手で直した箇所のすべて。そのまま設定JSONに残り、卒論の付録になります。</p>
+  <p>手で直した箇所のすべて。そのまま設定JSONに残り、監査記録になります。</p>
 </div>`), [{ label: "閉じる", kind: "ghost" }]);
 
 document.addEventListener("keydown", (e) => {
@@ -1919,8 +1914,7 @@ $("saveBtn").onclick = saveSettings;
 
 // 書き出し。既存ファイルがあれば、上書きするか別名で残すかを選ばせる。
 // 設定を変えて書き出し → KH Coder で見て → また変えて…を繰り返すので、
-// **前の版を潰したかどうかが分からないと比較にならない。**
-// 手順チェックリストの「書き出す前の確認」は 2026-08-31 に撤去（ページ除外の廃止）
+// 前の版を潰したかどうかが分からないと比較にならない。
 $("exportBtn").onclick = () => runExport({});
 
 async function runExport(opts) {
@@ -2035,8 +2029,8 @@ async function runJob(params, title) {
   }
 }
 
-// ---------- 文脈窓（2026-08-22 夜に追加） ----------
-// 「生成AI」を含む文の前後N文を1つの窓にして一覧する。文（狭い）とページ（広い）の間を
+// ---------- 文脈窓 ----------
+// 検索語を含む文の前後N文を1つの窓にして一覧する。文（狭い）とページ（広い）の間を
 // 固定幅で見るための補助（→ core.context_windows）。文書全体を解析するので初回は時間がかかる。
 // サーバー側は設定ごとに結果を持つ（同じ設定なら2回目以降は一瞬）。
 
@@ -2179,11 +2173,11 @@ async function exportCtx() {
   }
 }
 
-// ---------- 抽出単位（L2。2026-08-25 追加） ----------
+// ---------- 抽出単位（L2） ----------
 // 検索語のヒット箇所を類型規則で単位化して一覧する（→ core.extract_units）。
 // 規則：本文→その文 ／ 表→その行 ／ ラベル（小・極小）→その文（手で結合できる）／ 見出し→その行。
 // 手作業は「足す」（unit_merges）と「外す」（unit_excludes）の2つだけで、全部 S.st に溜まり、
-// 保存すると設定JSONに残る（＝再生すれば同一の出力＝卒論3.5節の監査記録そのもの）。
+// 保存すると設定JSONに残る（＝再生すれば同一の出力になる＝監査記録そのもの）。
 
 const UNIT_EMPTY = `<p class="note empty">検索語のヒット箇所を規則で単位化します：本文→その文 ／ 表→その行 ／ ラベル→その文（結合できる）／ 見出し→その行。<br>
   <span class="hint">薄い文をクリックすると単位に足せます。単位ごとに「外す」で理由を付けて除外できます。手作業はすべて設定JSONに残ります。</span></p>`;
@@ -2202,8 +2196,8 @@ $("unitKwSave").onclick = () => {
   if (!kws.length) { toast("検索語欄に語を入れてから押してください（カンマ区切り）", "err"); return; }
   const body = el(`<div><p class="note">この検索語を<b>全文書共通の既定</b>として保存します。
     バッチ（pdf2txt.py）・文脈窓も同じ語で抽出するようになります。<br>
-    🔴 検索語は<b>全文書・全時点で共通</b>が原則です（片方だけ変えると比較が壊れます）。
-    変えたら卒論の表3.3も更新してください。</p>
+    検索語は<b>全文書で共通</b>が原則です（一部だけ変えると比較が壊れます）。
+    変えたときは、何を検索語にしたかの記録も更新してください。</p>
     <p><code>${esc(kws.join(" / "))}</code></p></div>`);
   modal("検索語を既定として保存しますか？", body, [
     { label: "保存する", kind: "primary", run: async () => {
@@ -2481,8 +2475,8 @@ function applyTheme(t) {
 for (const b of $("themeSeg").querySelectorAll("button")) b.onclick = () => applyTheme(b.dataset.theme);
 applyTheme((() => { try { return localStorage.getItem("theme") || "auto"; } catch (e) { return "auto"; } })());
 
-// ---------- Excelプレビュー（2026-08-25） ----------
-// **実際にExcelにできる行と列**をそのまま表で見せる（→ /api/units/table ＝ 書き出しと同じ経路）。
+// ---------- Excelプレビュー ----------
+// 実際にExcelにできる行と列をそのまま表で見せる（→ /api/units/table ＝ 書き出しと同じ経路）。
 // 「書き出したら思っていた形と違った」を書き出す前に潰すためのもの。
 
 async function showUnitTable(docs) {
@@ -2516,10 +2510,10 @@ async function showUnitTable(docs) {
   }
 }
 
-// --- 出現率（RQ1 の材料。2026-08-31 追加） -------------------------------------
-// 冊ごとの 総文数・ヒット文数・総ページ数・ヒットページ数と率。**絶対数と率の両方**を出し、
-// どちらで見ても結論が変わらないことを確認する（→ 検討_2026-08-25_抽出単位方式.md §1）。
-// 🔴 分子・分母とも L1 の機械的検出＝確認モードの手作業（除外・結合）は影響しない
+// --- 出現率 ---------------------------------------------------------------
+// 冊ごとの 総文数・ヒット文数・総ページ数・ヒットページ数と率。絶対数と率の両方を出し、
+// どちらで見ても結論が変わらないことを確認する。
+// 分子・分母とも L1 の機械的検出で数え、確認モードの手作業（除外・結合）は影響させない
 
 $("ratesBtn").onclick = async () => {
   try {
@@ -2567,8 +2561,8 @@ function showRates(j) {
   modal("出現率（冊ごとの絶対数と率）", box, [{ label: "閉じる", kind: "ghost" }]);
 }
 
-// ---------- 確認モード（2026-08-25。卒論では「監査」と呼ぶ手続き） ----------
-// **選んだ文書（未選択なら全部）のヒット箇所を、1本のキューで上から順に確認する。**
+// ---------- 確認モード ----------
+// 選んだ文書（未選択なら全部）のヒット箇所を、1本のキューで上から順に確認する。
 // ✓（確認）は unit_checks として文書ごとの設定JSONに残り、確認までの秒数も記録される
 // ＝「1サイトあたりの確認時間」の実測がそのまま取れる。
 // 足す・外すも同じ画面からでき、操作のたびに自動保存する（途中でやめても再開できる）。
@@ -2578,27 +2572,25 @@ const AU = { docs: [], sets: {}, byDoc: {}, curKey: null, t0: 0, kw: null,
              reasons: null,   // core.OP_REASONS（ジョブの応答に同梱される。→ auReasons）
              pageData: null };// いま右に出しているページの解析結果（繋ぐ操作の照合に使う）
 
-// 確認モードへ直行（切り取りと除外のゲートは 2026-08-31 に画面ごと撤去）
+// 確認モードへ直行（手前に確認のゲートは置かない）
 $("auditBtn").onclick = () => openAudit(SEL.size ? [...SEL] : null);
-
-// 🔴 「切り取りと除外」（境界の確認画面）は 2026-08-31 に座標カットの廃止とともに撤去した。
-//    経緯は 記録/2026-08-31.md と git 履歴。
 
 $("auditBack").onclick = () => closeAudit();
 $("auditOnlyTodo").onchange = () => renderAuditList();
 $("auditPreview").onclick = () => showUnitTable(AU.docs.length ? AU.docs : null);
 $("auditExport").onclick = () => auditExportDialog();
-// 検索語（全文書・全時点で共通）。確認モードから見えず、どう足すか分からなかったため（2026-08-26）
+// 検索語（全文書で共通）。確認モードからも中身を見て足せるようにする
 $("auditKwBtn").onclick = () => {
   const kws = AU.kw || [];
   const body = el(`<div style="max-width:520px">
-    <p class="note">ヒットの検索に使っている語（<b>全文書・全時点で共通</b>）：</p>
+    <p class="note">ヒットの検索に使っている語（<b>全文書で共通</b>）：</p>
     <p class="kwchips">${kws.map((k) => `<code>${esc(k)}</code>`).join(" ")}</p>
     <label class="note" style="display:block">語を編集（カンマ区切り。例：AIエージェント を足す）
       <textarea id="kwEdit" rows="3" style="width:100%;margin-top:4px">${esc(kws.join(", "))}</textarea></label>
     <p class="note">英字だけの語（LLM など）は<b>単語として</b>当たります（Fulfillment の中の llm には当たりません）。<br>
     保存すると <code>設定\\検索語.json</code> が更新され（前の版は履歴に退避）、
-    バッチ・文脈窓・全冊書き出しも同じ語を使います。語を変えたら<b>卒論の表3.3</b>も更新してください。</p></div>`);
+    バッチ・文脈窓・全冊書き出しも同じ語を使います。語を変えたときは、
+    何を検索語にしたかの記録も更新してください。</p></div>`);
   const ta = body.querySelector("#kwEdit");
   modal("検索語を見る・変える", body, [
     { label: "保存して集め直す", kind: "primary", run: async () => {
@@ -2616,8 +2608,7 @@ $("auditKwBtn").onclick = () => {
   ]);
 };
 
-// 判断基準の早見（2026-09-01 追加）。実際に迷って決めた事例から書いている。
-// 決定の経緯は 記録/2026-09-01.md・検討_2026-08-25_抽出単位方式.md の事例表（手元のみ）
+// 判断基準の早見。実際に迷って決めた事例をもとに書いている。
 $("auditGuide").onclick = () => {
   modal("判断に困ったときは？ — 単位と操作の判断基準", el(`<div class="note" style="max-width:640px">
     <p><b>大原則は4つ。</b></p>
@@ -2634,56 +2625,56 @@ $("auditGuide").onclick = () => {
       <li><b>表の1行に目標と実績が両方入っている</b> —
         列見出し（KPI／目標／実績など）を異にする<b>自己完結したセル群</b>（箇条書きでも散文でも）の連結なら
         <b>分ける（理由：セル群の癒着）</b>。ヒットを含むセル群が単位になる
-        （例：D社 2024 p11／2025 p10 のマテリアリティKPI表＝箇条書き、
-        Q社 2025 p133 の目標｜実績表＝散文セル）。
-        ⚠️ <b>単一セルの中の箇条書きは行全体のまま</b>（例：D社 2024 p12。実績セルに3項目、ヒットは1つ→そのまま）。
+        （例：目標｜実績が横に並ぶマテリアリティKPI表＝箇条書きのセル群、
+        同じ形で散文のセルが並ぶ表）。
+        ⚠️ <b>単一セルの中の箇条書きは行全体のまま</b>（実績セルに3項目あってヒットが1つでも、そのまま）。
         セルの中身が長いだけなら単位も長いままでよい（長さを理由に狭めない）</li>
       <li><b>ヒット文の前の項目・見出しも足したくなった</b> — <b>足さない</b>。
-        文が単独で読めるならその1文が単位（例：D社 2024 p76「生成AIによる人権侵害リスクの…反映」）。
+        文が単独で読めるならその1文が単位（例：「生成AIによる人権侵害リスクの…反映」）。
         足すのは「離すと意味が取れないラベル」だけ</li>
       <li><b>リンクにヒット</b> — <b>文の形をした記述か、ラベルか</b>で決める。
         事例・ニュース見出しがそれ自体で内容を語っている（一覧＝そのページの記述本体）なら<b>残す</b>
-        （例：D社「130億パラメータで…LLMを開発」）。
-        ページ名・ボタン文言なら<b>単位ごと外す（理由：リンク）</b>（例：D社「〈製品名〉: 製品・ソリューション」）。
+        （例：「130億パラメータで…LLMを開発」）。
+        ページ名・ボタン文言なら<b>単位ごと外す（理由：リンク）</b>（例：「〈製品名〉: 製品・ソリューション」）。
         記事の末尾に付く「プレスリリース：〜」「〇〇ニュース：〜」型は、<b>本文が同じ内容を語っている案内</b>なので
-        <b>外す（理由：リンク）</b>（2026-09-02 の裁定。T社 2024 p39・p46・p47）</li>
+        <b>外す（理由：リンク）</b></li>
       <li><b>見出し・図解ラベルのヒット</b> — <b>残す</b>。節を立てたこと自体が位置づけの記述
         （例：見出し「生成AI人材の育成」、図タイトル「生成AI 人財育成体系」）。
         外すのは目次・柱・章扉・対照表・ヘッダー・フッターの<b>再掲・ナビ</b>だけ</li>
       <li><b>「生成AI生成AI」のような重複・断片</b> — <b>単位ごと外す（理由：断片）</b>。
-        図解ラベルの二重描画・バラけの事故（例：A社の技術テーマ六角形）</li>
+        図解ラベルの二重描画・バラけの事故（例：六角形に並べた技術テーマのラベル）</li>
       <li><b>段またぎで文が切れて、間にページ番号・柱が挟まる</b>
-        （座標カット廃止後はページ番号がデータに残るため）—
+        （座標で切り取らないので、ページ番号がデータに残るため）—
         ①挟まったページ番号を<b>除外（理由：ページ表記）</b>してから、
         ②切れた文を<b>前と繋ぐ（理由：段またぎ）</b>。
-        全単位を除外したブロックは結合の流れの上で透過になる（2026-09-02〜）ので、
+        全単位を除外したブロックは結合の流れの上で透過になるので、
         除外→繋ぐの順なら原文どおりの1文に戻る
-        （例：T社 2024 p46「また、生成AIによ｜46｜る回答後も…」→
+        （例：「また、生成AIによ｜46｜る回答後も…」→
         「また、生成AIによる回答後も…確認できます。」）。
         ⚠️ 除外せず先に繋ぐと、ページ番号を巻き込んで「…によ46る…」になる</li>
       <li><b>※・＊の注記にヒット</b> — 形式ではなく<b>中身</b>で決める。
         設立年月・出典・案内のような補足（本体の記述は別の単位で拾えている）なら
-        <b>外す（理由：出典注記）</b>（例：A社の「＊1 前身の…室を設立」）。
+        <b>外す（理由：出典注記）</b>（例：「＊1 前身の…室を設立」）。
         用語の言い換え・略語展開だけなら<b>外す（理由：用語注記）</b>
-        （例：T社「※7 大規模言語モデル。」＝LLMをほどいただけ）。
+        （例：「※7 大規模言語モデル。」＝LLMをほどいただけ）。
         <b>注記にしか書かれていない実質情報</b>（投資額など）や<b>範囲を定義する列挙</b>なら<b>残す</b>
-        （例：T社 2024 p10「SuperPODなど生成AI関連の投資73億円」＝生成AI投資の唯一の言及、
-        T社「※1 国産LLM、マルチ生成AIなど」＝最先端テクノロジーが何を指すかの定義）</li>
+        （例：「SuperPODなど生成AI関連の投資73億円」＝投資額がここにしか書かれていない、
+        「※1 国産LLM、マルチ生成AIなど」＝ある語が何を指すかの定義）</li>
       <li><b>箇条書きが数珠つなぎで1文になる</b> — 句点が無ければ仕様。
-        「ラベル＋配下の項目」のまとまりなら<b>そのまま</b>（例：D社「・サイバーセキュリティ―…―攻撃診断AIエージェント…」）。
-        無関係な見出し同士の癒着なら<b>分ける（理由：別の文の癒着）</b>（例：D社のニュース見出し8本の連結）</li>
+        「ラベル＋配下の項目」のまとまりなら<b>そのまま</b>（例：「・サイバーセキュリティ―…―攻撃診断AIエージェント…」）。
+        無関係な見出し同士の癒着なら<b>分ける（理由：別の文の癒着）</b>（例：ニュース見出し8本の連結）</li>
       <li><b>列が混ざる・文の途中に別の欄の文言が割り込む</b> — <b>表の検出をやめる</b>でページごと取り直す。
-        帯や枠線の誤検出なら理由は<b>レイアウトの枠</b>（例：D社 2024 p76・p115）。
+        帯や枠線の誤検出なら理由は<b>レイアウトの枠</b>。
         <b>本物の表でも</b>、複数行に折り返すセルが多いと行の復元がセル同士の行を混ぜる——
         その場合も検出をやめて列ブロック（セル単位の完全な文言）で取る。理由は<b>復元が崩れる表</b>
-        （例：T社 2024 p13 のマテリアリティ一覧。ヒットのセル＝箇条書き2本がそのまま単位になる）</li>
+        （例：折返しの多いマテリアリティ一覧。ヒットのセル＝箇条書き2本がそのまま単位になる）</li>
       <li><b>表なのに指標名と値がバラバラのラベルで拾われる</b> — 罫線なし表の検出漏れ。
         値のセルはヒットしないので、放置すると目標値がL2から消える。直し方は2つ：
         ①「開いて直す」で<b>表の範囲を手で指定（理由：罫線なし。範囲は表全体を囲む）</b>。
         ②text検出の帯が文の途中で切れる（定義セルの文がバラバラになる）なら、
         指定せずに<b>行のピースを「足す（理由：表の続き）」で1単位に束ねる</b>——
-        列ブロックのままなら各セルは完全な文で取れる（例：A社 2025 p14 の
-        マテリアリティ×非財務指標は②で解決）。同じ表の年違いにも同じ手順を</li>
+        列ブロックのままなら各セルは完全な文で取れる（マテリアリティ×非財務指標の表は
+        ②で解決した例がある）。同じ表の年違いにも同じ手順を</li>
       <li><b>外すときは必ずこの画面の「単位ごと外す」（L2）</b>。
         L1の「除外」はデータごと消えて<b>出現率が動く</b>ので、ヒットの除外には使わない</li>
     </ul>
@@ -2950,19 +2941,18 @@ const AU_FALLBACK_REASONS = {
   unit_excludes: [
     { key: "商標注記", label: "商標・登録商標の注記" },
     { key: "出典注記", label: "出典・参照先の注記" },
-    // 2026-09-02 追加（→ core.OP_REASONS。範囲を定義する注記は内容なので残す）
+    // 範囲を定義する注記は内容なので残す（→ core.OP_REASONS）
     { key: "用語注記", label: "用語の言い換え・略語展開だけの注記" },
     { key: "誤ヒット", label: "検索語の誤ヒット" },
     { key: "断片", label: "語として意味を成さない断片" },
     { key: "柱の取り残し", label: "柱・ナビの取り残し" },
-    // 2026-08-31 ページ除外・座標カットの廃止に伴い追加（→ core.OP_REASONS）
+    // 構成要素のページやヘッダー／フッターに出たヒット（→ core.OP_REASONS）
     { key: "目次", label: "目次の項目" },
     { key: "表紙", label: "表紙・裏表紙の文言" },
     { key: "章扉", label: "章扉の章題・ナビ" },
     { key: "対照表", label: "対照表・索引の項目" },
     { key: "ヘッダー", label: "ヘッダーのため除外（章名ナビ・柱）" },
     { key: "フッター", label: "フッターのため除外（ページ番号・欄外）" },
-    // 2026-09-01 追加（→ core.OP_REASONS）
     { key: "リンク", label: "リンクのため除外（参照先のラベル・ボタン文言）" },
   ],
   excluded: [
@@ -2982,7 +2972,7 @@ const AU_FALLBACK_REASONS = {
   splits: [
     { key: "見出しの癒着", label: "本文と同じptの見出しが、本文と同じブロックに入っていた" },
     { key: "別の文の癒着", label: "別々の文・ラベルが1つのブロックに入っていた" },
-    // 2026-09-01 表の行の分割に伴い追加（09-02 散文セルにも一般化。→ core.OP_REASONS）
+    // 表の行の分割で使う。箇条書きに限らず散文のセルも対象（→ core.OP_REASONS）
     { key: "セル群の癒着", label: "表の1行に、独立したセル群が複数連結されていた" },
   ],
   unit_merges: [
@@ -2993,7 +2983,6 @@ const AU_FALLBACK_REASONS = {
   table_off: [
     { key: "図解の枠", label: "表ではなく図解の枠線だった（組織図・フロー図など）" },
     { key: "レイアウトの枠", label: "ページ全体や段組みを囲む枠線だった" },
-    // 2026-09-02 追加（→ core.OP_REASONS）
     { key: "復元が崩れる表", label: "本物の表だが、セルの折返しが行の復元で混ざる" },
   ],
 };
@@ -3011,8 +3000,8 @@ function auReasonItems(op, run) {
 
 // --- L1 の手作業（文の除外・ブロックの結合）を確認モードから -----------------
 // 「開いて直す」で毎回画面を往復しなくて済むように、カードの上で同じ操作を作る。
-// ⚠️ どちらも**全文データ（L1）ごと直す**操作。ルールの形も照合キーも作業画面と同じで、
-//    設定JSONに残る（→ core の excluded / joins）。単位だけの操作（足す・外す）とは層が違う。
+// 注意: どちらも全文データ（L1）ごと直す操作。ルールの形も照合キーも作業画面と同じで、
+//       設定JSONに残る（→ core の excluded / joins）。単位だけの操作（足す・外す）とは層が違う。
 
 /** L1 を触った後の共通処理：保存 → 単位を取り直す → いま見ていた単位（か同じページ）へ戻る。
  *  文の切れ方が変わるので、文書全体の再解析が走る（数秒かかることがある）。 */
@@ -3072,7 +3061,7 @@ async function auPageData(doc, page) {
 }
 
 /** この文のブロックを、ひとつ前のブロックと繋ぐ（L1 の joins）。
- *  ⚠️ ルールの鍵は**結合前の生text**（→ core.apply_joins）。だから parts の端を使う */
+ *  注意: ルールの鍵は結合前の生text（→ core.apply_joins）。だから parts の端を使う */
 async function auJoinPrev(it, s, reason) {
   const doc = it.doc, page = s["ページ"];
   let d;
@@ -3106,9 +3095,9 @@ function auJoinMenu(it, s, anchor) {
 
 /** このブロックを行の境目で2つに分ける（L1 の splits。joins の逆）。
  *  本文と同じptの見出しは、下の本文と同じブロックに入ることがある。見出しは句点で
- *  終わらないので、そのままだと**見出し＋本文が1つの文**になる（D社 2023 p62）。
- *  ⚠️ ルールの鍵は**結合前の生text**＋左上の位置（→ core.apply_splits）。
- *     結合済みのブロックでは、境目を含むパーツを名指しし、行番号もパーツ内で数え直す */
+ *  終わらないので、そのままだと見出し＋本文が1つの文になる。
+ *  注意: ルールの鍵は結合前の生text＋左上の位置（→ core.apply_splits）。
+ *        結合済みのブロックでは、境目を含むパーツを名指しし、行番号もパーツ内で数え直す */
 async function auSplitMenu(it, s, anchor) {
   const doc = it.doc, page = s["ページ"];
   let d;
@@ -3121,10 +3110,10 @@ async function auSplitMenu(it, s, anchor) {
 
   let bounds;
   if (g.table !== undefined && g.table !== null) {
-    // 表の行（2026-09-01）：セル群の癒着（D社 2024 p11）を境目で分けられるようにする。
-    // ⚠️ 表の raw は列の組み直しで作られ、行textの連結ではない（→ core.apply_table_splits が
-    //    分けた後の raw も組み直す）。パーツの継ぎ目の検出は文字数勘定が成り立たないので、
-    //    結合済みの表の行は分割の対象にしない（先に結合を戻してもらう）
+    // 表の行：セル群の癒着を境目で分けられるようにする。
+    // 注意: 表の raw は列の組み直しで作られ、行textの連結ではない（→ core.apply_table_splits が
+    //       分けた後の raw も組み直す）。パーツの継ぎ目の検出は文字数勘定が成り立たないので、
+    //       結合済みの表の行は分割の対象にしない（先に結合を戻してもらう）
     if (parts.length > 1) {
       toast("結合済みの表の行は分けられません。先に結合のほうを戻してください", "err");
       return;
@@ -3165,9 +3154,9 @@ async function auSplitMenu(it, s, anchor) {
 function auSplit(it, page, g, b, reason) {
   const st = AU.sets[it.doc];
   st.splits = st.splits || [];
-  // ⚠️ 位置（at）は持たせない。ブロックの生text全体＋ページで実質一意で、
-  //    結合（joins）の a/b と同じ考え方。座標を持たせると、解析ごとのわずかな
-  //    座標の揺れでルールが黙って外れる事故のもとになる（2026-08-26 に実際に起きた）
+  // 注意: 位置（at）は持たせない。ブロックの生text全体＋ページで実質一意で、
+  //       結合（joins）の a/b と同じ考え方。座標を持たせると、解析ごとのわずかな
+  //       座標の揺れでルールが黙って外れる事故のもとになる
   const rule = { page, text: (g.parts || [])[b.part] ?? g.raw,
                  line: b.line, reason: reason || "" };
   st.splits.push(rule);
@@ -3182,8 +3171,8 @@ function auExcludeMenu(it, s, anchor) {
 }
 
 /** 図解の枠線を表と誤検出して、枠の中を丸ごと1行に潰してしまったページ用（L1 の table_off）。
- *  ⚠️ **除外で対処しない。** 単位ごと除外すると本物のヒットまでデータから消える。
- *     表の検出をやめれば、ブロックが普通に切り直され、ヒットした文だけが単位として取れる。 */
+ *  注意: 除外で対処しない。単位ごと除外すると本物のヒットまでデータから消える。
+ *        表の検出をやめれば、ブロックが普通に切り直され、ヒットした文だけが単位として取れる。 */
 function auTableOff(it, reason) {
   const { doc, u } = it;
   const page = u["ページ"];
@@ -3209,7 +3198,7 @@ function auTableOffMenu(it, anchor) {
 
 // --- カード（左上段）。前の文脈 → Excelに入るテキスト → 後の文脈 の3層 --------
 // 「どの部分が書き出されるのか分かりにくい」という指摘から、書き出される部分を
-// **青い枠のゾーン**として明示する。青＝メイン色（選択・主要）で、ここが本体という意味。
+// 青い枠のゾーンとして明示する。青＝メイン色（選択・主要）で、ここが本体という意味。
 
 function auSentRow(it, s, hl2, multiPage) {
   const { doc, u } = it;
@@ -3374,7 +3363,7 @@ function renderAuditDetail(it) {
   };
   bar.appendChild(okBtn);
 
-  // 確認済みの単位を見直しているとき用：✓ を外して「未確認」に戻す（2026-08-31 追加）。
+  // 確認済みの単位を見直しているとき用：✓ を外して「未確認」に戻す。
   // 見直して判断を保留したいときに、もう一度キューへ戻せる。記録（unit_checks）からも消える
   if (u["確認"]) {
     const undo = document.createElement("button");
@@ -3433,7 +3422,7 @@ function renderAuditDetail(it) {
   }
 
   // 表の行の単位にだけ出す：図解の枠線を表と誤検出して、枠の中を丸ごと抜き出してしまったとき用。
-  // ⚠️ 単位の除外では対処しない（本物のヒットごと消えてデータが歪む）。→ auTableOff
+  // 注意: 単位の除外では対処しない（本物のヒットごと消えてデータが歪む）。→ auTableOff
   if (u["規則"] === "表の行" && !excluded) {
     const toff = document.createElement("button");
     toff.className = "ghost";
@@ -3485,12 +3474,12 @@ async function auditShowPage(it) {
   const holder = el(`<div class="apage"><div class="apage-cap hint">${esc(doc)}　p.${page}（印刷上：${esc(String(u["ページ表示"] || page))}）
     <span class="apage-legend"><span class="lg-box"></span>単位の範囲　<span class="lg-word"></span>検索語</span></div>
     <div class="apage-img"><div class="apage-zw" style="width:${AUZOOM}%"><img src="/api/doc/${encodeURIComponent(doc)}/page/${page}.jpg?zoom=${AU_IMG_ZOOM}" alt=""></div></div></div>`);
-  // ⚠️ el() は DocumentFragment を返す。append すると中身が移って空になるので、
-  //    参照は**append する前に**取っておく（取った要素は移動後もそのまま使える）
+  // 注意: el() は DocumentFragment を返す。append すると中身が移って空になるので、
+  //       参照はappend する前に取っておく（取った要素は移動後もそのまま使える）
   const imgbox = holder.querySelector(".apage-zw");
   box.appendChild(holder);
   // 単位の枠（ページ解析）と、検索語そのものの矩形（→ /hits）を並行で取る。
-  // /hits には**この単位の文**も渡す：同じブロックに別の単位のヒット文があるとき、
+  // /hits にはこの単位の文も渡す：同じブロックに別の単位のヒット文があるとき、
   // その単位の語まで光らせないため（サーバー側で文へ帰属させて絞る）
   const words = (u["ヒット語"] || "").split("／").map((w) => w.trim()).filter(Boolean);
   const texts = (u["文"] || []).filter((s) => s["ページ"] === page).map((s) => s["文"]);
@@ -3517,7 +3506,7 @@ async function auditShowPage(it) {
       imgbox.appendChild(bx);
       if (!firstBox) firstBox = bx;
     }
-    // 語のピンポイント。**この単位の文に属する出現だけ**がサーバーから返ってくる
+    // 語のピンポイント。この単位の文に属する出現だけがサーバーから返ってくる
     // （同じブロック・同じページの別の単位の語は光らせない。→ /hits の _hit_in_texts）
     let firstWord = null;
     if (hj) {
@@ -3554,7 +3543,7 @@ function auditExportDialog() {
       <option value="群">群ごと</option>
       <option value="種別">種別ごと</option>
     </select></label></div>`);
-  // ⚠️ el() は DocumentFragment：modal に渡すと中身が移るので、参照は先に取る
+  // 注意: el() は DocumentFragment：modal に渡すと中身が移るので、参照は先に取る
   const gbSel = body.querySelector("#auditGroupBy");
   modal("全冊書き出し", body, [
     { label: "書き出す", kind: "primary", run: async () => {
